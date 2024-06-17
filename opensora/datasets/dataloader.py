@@ -76,6 +76,7 @@ def prepare_dataloader(
         num_replicas=process_group.size(),
         rank=process_group.rank(),
         shuffle=shuffle,
+        seed = seed
     )
 
     # Deterministic dataloader

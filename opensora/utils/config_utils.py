@@ -1,6 +1,7 @@
 import argparse
 import json
 import os
+import datetime
 from glob import glob
 
 from mmengine.config import Config
@@ -162,9 +163,14 @@ def create_experiment_workspace(cfg):
 
 
 def save_training_config(cfg, experiment_dir):
-    with open(f"{experiment_dir}/config.txt", "w") as f:
+    save_path = os.path.join(experiment_dir, "training_config_backup.json")
+    if os.path.exists(save_path):
+        now = datetime.datetime.now().strftime("%Y-%m-%dT%H-%M-%S")
+        save_path += f"{now}.json"
+    
+    with open(save_path, "w") as f:
         json.dump(cfg, f, indent=4)
-
+    return save_path
 
 def create_tensorboard_writer(exp_dir):
     tensorboard_dir = f"{exp_dir}/tensorboard"

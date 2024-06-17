@@ -118,3 +118,45 @@ class MaskGenerator:
             masks.append(mask)
         masks = torch.stack(masks, dim=0)
         return masks
+
+
+### Prefix Frame (frame as prompt) utils:
+
+def _get_prefix_len_choices(ar_size,max_length,n_given_frames=1):
+    '''
+    - ar_size: auto-regre window size (same at training & inference)
+    - max_length: max frames of training samples
+    - n_given_frames: n_given_frames at inference time (e.g., given the first frame at inference)
+    '''
+    prefix_len_choices = []
+    accumulate_frames = n_given_frames
+    while accumulate_frames < max_length:
+        prefix_len_choices.append(accumulate_frames)
+        accumulate_frames += ar_size
+    
+    return prefix_len_choices
+
+class PrefixLenSampler:
+    def __init__(self,ar_size,n_given_frames,sampling_strategy=None) -> None:
+        self.ar_size = ar_size
+        self.n_given_frames = n_given_frames
+        self.prefix_len_choices = dict()
+        self.sampling_strategy = sampling_strategy # TODO 
+        # e.g., sample short prefix at early training epochs and longer prefix later
+    
+    def random_choose(self,max_len):
+        if self.sampling_strategy is not None:
+            raise NotImplementedError("TODO")
+
+        if max_len in self.prefix_len_choices:
+            pL_choices = self.prefix_len_choices[max_len]
+        else:
+            pL_choices = _get_prefix_len_choices(self.ar_size,max_len,self.n_given_frames)
+            self.prefix_len_choices.update({max_len:pL_choices})
+            print(f"update max_len: {max_len}:")
+            print(f" >> prefix_len_choices: {pL_choices}")
+            print(f" >> min denoise len: {max_len - pL_choices[-1]}")
+        pL = random.choice(pL_choices)
+
+        return pL
+        

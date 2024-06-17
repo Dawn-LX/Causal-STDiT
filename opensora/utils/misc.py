@@ -3,6 +3,7 @@ import importlib
 import logging
 import os
 import time
+import json
 from collections import OrderedDict
 from collections.abc import Sequence
 from itertools import repeat
@@ -12,6 +13,13 @@ import numpy as np
 import torch
 import torch.distributed as dist
 
+def load_jsonl(path) -> list:
+    with open(path,'r') as file:
+        data = []
+        for line in file:
+            d = json.loads(line)
+            data.append(d)
+    return data
 
 def print_rank(var_name, var_value, rank=0):
     if dist.get_rank() == rank:
