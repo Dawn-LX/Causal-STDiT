@@ -8,9 +8,13 @@ from typing import Tuple
 import torch
 import torch.distributed as dist
 import torch.nn as nn
-from colossalai.booster import Booster
-from colossalai.checkpoint_io import GeneralCheckpointIO
-from colossalai.cluster import DistCoordinator
+try:
+    from colossalai.booster import Booster
+    from colossalai.checkpoint_io import GeneralCheckpointIO
+    from colossalai.cluster import DistCoordinator
+except:
+    print("colossalai not available")
+    Booster,GeneralCheckpointIO,DistCoordinator = None,None,None
 from torch.optim import Optimizer
 from torch.optim.lr_scheduler import _LRScheduler
 from torchvision.datasets.utils import download_url

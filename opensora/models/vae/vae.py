@@ -1,6 +1,13 @@
 import torch
 import torch.nn as nn
-from diffusers.models import AutoencoderKL, AutoencoderKLTemporalDecoder
+import diffusers
+print(diffusers,f"version = {diffusers.__version__}")
+from diffusers.models import AutoencoderKL
+try:
+    from diffusers.models import AutoencoderKLTemporalDecoder
+except:
+    print("AutoencoderKLTemporalDecoder not available")
+
 from einops import rearrange
 
 from opensora.registry import MODELS

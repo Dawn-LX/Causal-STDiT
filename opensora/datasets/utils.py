@@ -1,6 +1,6 @@
 import os
 import re
-
+import json
 import numpy as np
 import pandas as pd
 import requests
@@ -25,6 +25,22 @@ regex = re.compile(
     r"(?:/?|[/?]\S+)$",
     re.IGNORECASE,
 )
+
+def load_jsonl(path) -> list:
+    with open(path,'r') as file:
+        data = []
+        for line in file:
+            d = json.loads(line)
+            data.append(d)
+    
+    return data
+
+def load_json(path):
+    with open(path,'r') as file:
+        data = json.load(file)
+
+    return data
+
 
 
 def is_url(url):

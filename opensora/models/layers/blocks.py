@@ -19,7 +19,10 @@ import torch.distributed as dist
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.utils.checkpoint
-import xformers.ops
+try:
+    import xformers.ops
+except:
+    print("xformers not available")
 from einops import rearrange
 from timm.models.vision_transformer import Mlp
 
