@@ -1,15 +1,11 @@
-import random
-import torch
-import numpy as np
 import torch
 import torch.nn as nn
 import torch.distributed as dist
-from einops import rearrange
 
+from opensora.models.layers.blocks import LlamaRMSNorm
 from opensora.acceleration.communications import all_to_all, split_forward_gather_backward
 from opensora.acceleration.parallel_states import get_sequence_parallel_group
 
-from opensora.models.layers.blocks import LlamaRMSNorm
 
 class AttentionWithContext(nn.Module):
     def __init__(
@@ -41,7 +37,7 @@ class AttentionWithContext(nn.Module):
 
         self.is_causal = is_causal
 
-    def forward(self, x: torch.Tensor, kv_context: torch.Tensor, return_kv:bool = False) -> torch.Tensor:
+    def forward(self, x: torch.Tensor, kv_context: torch.Tensor = None, return_kv:bool = False) -> torch.Tensor:
         B, N, C = x.shape
         # flash attn is not memory efficient for small sequences, this is empirical
         # enable_flash_attn = self.enable_flash_attn and (N > B) # TODO
@@ -130,13 +126,17 @@ class AttentionWithContext(nn.Module):
 
 class SeqParallelAttentionWithContext(AttentionWithContext):
 
-    def forward(self, x: torch.Tensor,context: torch.Tensor, is_ctx_as_kv:bool = False) -> torch.Tensor:
+    def forward(self, x: torch.Tensor, kv_context: torch.Tensor = None, return_kv:bool = False) -> torch.Tensor:
         sp_group = get_sequence_parallel_group()
         sp_size = dist.get_world_size(sp_group)
 
         B, SUB_N, C = x.shape  # for sequence parallel here, the SUB_N is a local sequence length
         N = SUB_N * sp_size
         qkv = self.qkv(x)
+        if return_kv:
+            kv_before_norm = qkv[:,:,C:].clone()
+            assert False, "TODO: consider auto-regre for seq parallel"
+
         qkv_shape = (B, SUB_N, 3, self.num_heads, self.head_dim)
         qkv = qkv.view(qkv_shape)
 
@@ -154,34 +154,25 @@ class SeqParallelAttentionWithContext(AttentionWithContext):
         qkv = qkv.permute(qkv_permute_shape)
         q, k, v = qkv.unbind(0)
 
-        if context is not None:
+        if kv_context is not None:
+            N_c = kv_context.shape[1]
+            # (B S) T_c C*2     (for temporal), T_c can be max_kv_cache_len
+            # (B T) (T_c S) C*2 (for spatial),  T_c is small, e.g., several previous frames
 
-            N_c = context.shape[1]
-            if is_ctx_as_kv:
-                # (B S) T_c C*2     (for temporal), T_c can be max_kv_cache_len
-                # (B T) (T_c S) C*2 (for spatial),  T_c is small, e.g., several previous frames
+            kv_shape = (B, N_c, 2, self.num_heads, self.head_dim)
+            kv = kv_context.view(kv_shape)
+            kv = split_forward_gather_backward(kv,sp_group,dim=3, grad_scale="down") # [B*S T_c, 2, NUM_HEAD,  HEAD_DIM] -> [B*S T_c, 2, NUM_HEAD_PER_DEVICE, HEAD_DIM]
+            kv = kv.permute(qkv_permute_shape)
+            extra_k,extra_v = kv.unbind(0)
 
-                kv_shape = (B, N_c, 2, self.num_heads, self.head_dim)
-                kv = context.view(kv_shape)
-                kv = split_forward_gather_backward(kv,sp_group,dim=3, grad_scale="down") # [B*S T_c, 2, NUM_HEAD,  HEAD_DIM] -> [B*S T_c, 2, NUM_HEAD_PER_DEVICE, HEAD_DIM]
-                kv = kv.permute(qkv_permute_shape)
-                extra_k,extra_v = kv.unbind(0)
-
-                cat_dim = 1 if self.enable_flash_attn else 2
-                k = torch.cat([extra_k,k],dim=cat_dim)
-                v = torch.cat([extra_v,v],dim=cat_dim)
-                '''# attn seqlen: 
-                    for temporal_attn: N_c + N = T_c + T    
-                    for spatial_attn:  N_c + N = T_c*S + S
-                    NOTE the order matters for causal temporal_attn, we must let extra_k before k in `torch.cat`
-                '''
-            else:
-                qkv = self.qkv(context)
-                qkv_shape = (B, N_c, 3, self.num_heads, self.head_dim)
-                qkv = qkv.view(qkv_shape)
-                qkv = all_to_all(qkv, sp_group, scatter_dim=3, gather_dim=1)
-                qkv = qkv.permute(qkv_permute_shape)
-                _,k,v = qkv.unbind(0) # overwrite k/v
+            cat_dim = 1 if self.enable_flash_attn else 2
+            k = torch.cat([extra_k,k],dim=cat_dim)
+            v = torch.cat([extra_v,v],dim=cat_dim)
+            '''# attn seqlen: 
+                for temporal_attn: N_c + N = T_c + T    
+                for spatial_attn:  N_c + N = T_c*S + S
+                NOTE the order matters for causal temporal_attn, we must let extra_k before k in `torch.cat`
+            '''
             
         q, k = self.q_norm(q), self.k_norm(k)
 
@@ -221,5 +212,9 @@ class SeqParallelAttentionWithContext(AttentionWithContext):
         x = x.reshape(x_output_shape)
         x = self.proj(x)
         x = self.proj_drop(x)
-        return x
+
+        if return_kv:
+            return x, kv_before_norm
+        else:
+            return x
 

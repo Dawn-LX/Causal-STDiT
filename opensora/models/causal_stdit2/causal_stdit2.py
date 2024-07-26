@@ -53,7 +53,7 @@ def _init_linear_eye(layer):
     nn.init.zeros_(layer.weight)
     nn.init.zeros_(layer.bias)
     dtype,device = layer.weight.dtype,layer.weight.device
-    ch_out,ch_in,_,_ = layer.weight.shape # e.g., (320,321,1,1)
+    ch_out,ch_in = layer.weight.shape # e.g., (320,321,1,1)
     extra_in_channels = ch_in - ch_out
     eye_ = torch.eye(ch_out,dtype=dtype,device=device)
     layer.weight[:,:ch_out] = eye_
@@ -479,7 +479,7 @@ class CausalSTDiT2(nn.Module):
         # NOTE self.num_temporal should only be used for training, for auto-regre inference, num_temporal changes at each auto-regre step
         # Thus, we decouple num_temporal & num_spatial
         # self.num_spatial = num_patches // self.num_temporal
-        self.num_saptial = (input_size[1] // patch_size[1]) * (input_size[2] // patch_size[2])
+        self.num_spatial = (input_size[1] // patch_size[1]) * (input_size[2] // patch_size[2])
 
         self.num_heads = num_heads
         self.dtype = dtype
@@ -560,6 +560,10 @@ class CausalSTDiT2(nn.Module):
             self.sp_rank = dist.get_rank(get_sequence_parallel_group())
         else:
             self.sp_rank = None
+        
+        self.KV_CACHE_MAX_SEQLEN = 128
+        self._kv_cache_registered = False
+        self.kv_cache_dequeue = True
 
     def get_relative_tpe(self,num_temporal):
         seq_length = num_temporal
@@ -623,7 +627,7 @@ class CausalSTDiT2(nn.Module):
                 x.shape == (B, C, T, H, W) == (3,4,16,32,32), input_size==(16,32,32); path_size == (1,2,2)
                 num_patches = (16/1) * (32/2) * (32/2) == 4096
                 num_temporal == 16/1 == 16
-                num_saptial == (32/2)*(32/2) = 256
+                num_spatial == (32/2)*(32/2) = 256
             '''
             self._check_input_shape(x)
             num_temporal = self.num_temporal
@@ -633,7 +637,7 @@ class CausalSTDiT2(nn.Module):
                 x.shape == (B, C, T, H, W) == (3,4,17,32,32), input_size==(17,32,32); path_size == (1,2,2)
                 num_patches = (17/1) * (32/2) * (32/2) = 4352
                 num_temporal == 17/1 == 17
-                num_saptial == (32/2)*(32/2) = 256
+                num_spatial == (32/2)*(32/2) = 256
             '''
             num_temporal = x.shape[2]
             assert self.patch_size[0] == 1, "TODO, consdier temporal patchify for auto-regre infer"
@@ -708,21 +712,6 @@ class CausalSTDiT2(nn.Module):
         x = x.to(torch.float32)
         return x
 
-    def pre_allocate_kv_cache(self,bsz,max_seq_len, kv_cache_dequeue=False):
-        '''NOTE bsz should take account into cls_free_guidance'''
-        bsz = bsz * self.num_saptial # b*h*w
-        device = self.pos_embed_temporal.device
-        dtype = self.dtype
-
-        for i, block in enumerate(self.blocks):
-            ## temporal attn
-            if not block.attn_temp._kv_cache_registered:
-                block.attn_temp._register_kv_cache(bsz,device,dtype,max_seq_len,kv_cache_dequeue)
-            
-            # cross-frame spatial attn
-            if hasattr(block,"attn_cf"):
-                # for cf_mode == "first_frame" # 防止下一个batch的数据用之前的first-frame
-                block.attn_cf._first_frame_kv_cache_writed = False
     
     def empty_kv_cache(self):
         # empty kv-cache to save GPU memory
@@ -750,14 +739,20 @@ class CausalSTDiT2(nn.Module):
         self.write_latents_to_cache(clean_x,y,mask)
 
     
-    def pre_allocate_kv_cache(self,bsz,device,dtype,max_seq_len=None,kv_cache_dequeue=True):
+    def pre_allocate_kv_cache(self,bsz,max_seq_len=None,kv_cache_dequeue=True):
         # support old version code
+        bsz2 = bsz*self.num_spatial
 
-        self.register_kv_cache(bsz,device,dtype,max_seq_len,kv_cache_dequeue)
+        self.register_kv_cache(bsz,max_seq_le=max_seq_len,kv_cache_dequeue=kv_cache_dequeue)
 
-    def register_kv_cache(self,bsz,device,dtype,max_seq_len=None,kv_cache_dequeue=True):
+    def register_kv_cache(self,bsz,max_seq_len=None,kv_cache_dequeue=True):
+        '''NOTE bsz should take account into cls_free_guidance'''
+
+        device = self.pos_embed_temporal.device
+        dtype = self.dtype
+
         B = bsz
-        S = self.num_saptial
+        S = self.num_spatial
         C = self.hidden_size
 
         if max_seq_len is None:
@@ -891,7 +886,7 @@ class CausalSTDiT2(nn.Module):
 
         # embedding
         x = self.x_embedder(x) # (B, N, C)
-        x = rearrange(x, "B (T S) C -> B T S C",T=num_temporal,S = self.num_saptial)
+        x = rearrange(x, "B (T S) C -> B T S C",T=num_temporal,S = self.num_spatial)
         x = x + self.pos_embed
         x = rearrange(x, "B T S C -> B (T S) C")
 
@@ -914,7 +909,7 @@ class CausalSTDiT2(nn.Module):
 
 
         # blocks
-        spatial_kv,temporal_kv = self._fetch_kv_cache() # this can be None for the 1st call (i.e., write the given 1st frame to kv-cache)
+        cached_kv_s,cached_kv_t = self._fetch_kv_cache() # this can be None for the 1st call (i.e., write the given 1st frame to kv-cache)
         # spatial_kv,  # (depth, B, T_p, S, C*2)
         # temporal_kv  # (depth, B, T_accu, S, C*2)
         
@@ -930,9 +925,9 @@ class CausalSTDiT2(nn.Module):
                 tpe = None
                 mask_channel_input = mask_channel if self.temp_extra_in_all_block else None
             
-            cached_kv_s = None if spatial_kv is None else spatial_kv[i]
-            cached_kv_t = None if temporal_kv is None else temporal_kv[i]
-            cached_kv = (cached_kv_s,cached_kv_t)
+            kv_s = None if cached_kv_s is None else cached_kv_s[i]
+            kv_t = None if cached_kv_t is None else cached_kv_t[i]
+            cached_kv = (kv_s,kv_t)
 
             x, spatial_kv,temporal_kv = block.forward_kv_cache(
                 x, y, t_mlp, y_lens, tpe, mask_channel_input, cached_kv=cached_kv,
@@ -989,12 +984,12 @@ class CausalSTDiT2(nn.Module):
 
 
         # blocks
-        spatial_kv,temporal_kv = self._fetch_kv_cache() # this can be None for the 1st call (i.e., write the given 1st frame to kv-cache)
-        # spatial_kv,  # (depth, B, T_p, S, C*2)
-        # temporal_kv  # (depth, B, T_accu, S, C*2)
+        cached_kv_s,cached_kv_t = self._fetch_kv_cache() # this can be None for the 1st call (i.e., write the given 1st frame to kv-cache)
+        # cached_kv_s,  # (depth, B, T_p, S, C*2)
+        # cached_kv_t  # (depth, B, T_accu, S, C*2)
         cached_len = self.cache_indicator.sum().item()
         assert cached_len > 0 , "call `write_latents_to_cache` first"
-        assert temporal_kv is not None,  "call `write_latents_to_cache` first"
+        assert cached_kv_t is not None,  "call `write_latents_to_cache` first"
         assert start_id == cached_len # start_id is used in old-version code, remove this ideally
         
         for i, block in enumerate(self.blocks):
@@ -1007,11 +1002,11 @@ class CausalSTDiT2(nn.Module):
                 tpe = None
                 mask_channel_input = mask_channel if self.temp_extra_in_all_block else None
 
-            cached_kv_s = None if spatial_kv is None else spatial_kv[i]  # it can be None when spatial_attn_enhance is None
-            cached_kv_t = temporal_kv[i]
-            cached_kv = (cached_kv_s,cached_kv_t)
+            kv_s = None if cached_kv_s is None else cached_kv_s[i]  # it can be None when spatial_attn_enhance is None
+            kv_t = cached_kv_t[i]
+            cached_kv_i = (kv_s,kv_t)
 
-            x = block.forward_kv_cache(x, y, t_mlp, y_lens, tpe, mask_channel_input,cached_kv=cached_kv, return_kv=False)
+            x = block.forward_kv_cache(x, y, t_mlp, y_lens, tpe, mask_channel_input,cached_kv=cached_kv_i, return_kv=False)
 
         
         # final process
@@ -1021,7 +1016,7 @@ class CausalSTDiT2(nn.Module):
         x = x.to(torch.float32) # cast to float32 for better accuracy
         return x
     
-    def unpatchify(self, x):
+    def unpatchify(self, x, input_size):
         """
         Args:
             x (torch.Tensor): of shape [B, N, C]
@@ -1030,7 +1025,9 @@ class CausalSTDiT2(nn.Module):
             x (torch.Tensor): of shape [B, C_out, T, H, W]
         """
 
-        N_t, N_h, N_w = [self.input_size[i] // self.patch_size[i] for i in range(3)]
+        N_t, N_h, N_w = [input_size[i] // self.patch_size[i] for i in range(3)]
+        if not self.training:
+            assert self.patch_size[0] == 1, "TODO: consider temporal patchify for auto-regression"
         T_p, H_p, W_p = self.patch_size
         x = rearrange(
             x,
