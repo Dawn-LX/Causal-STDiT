@@ -191,3 +191,5 @@ package.json
 assets/
 working_dir/
 working_dir*/
+_backup/*
+note*

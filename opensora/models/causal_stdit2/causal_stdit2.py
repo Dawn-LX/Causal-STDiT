@@ -27,10 +27,9 @@ from opensora.models.layers.blocks import (
 from opensora.registry import MODELS
 from opensora.utils.ckpt_utils import load_checkpoint
 
-from opensora.models.layers.blocks2 import (
-    CausalSelfAttention,
-    SeqParallelCausalSelfAttention,
-    SpatialConditionAttention
+from .attention import (
+    AttentionWithContext,
+    SeqParallelAttentionWithContext,
 )
 
 from opensora.utils.debug_utils import envs
@@ -109,7 +108,7 @@ class T2IFinalLayerExpand(T2IFinalLayer):
         return x
 
 
-class CausalSTDiTBlock(nn.Module):
+class CausalSTDiT2Block(nn.Module):
     def __init__(
         self,
         hidden_size,
@@ -122,30 +121,34 @@ class CausalSTDiTBlock(nn.Module):
         enable_flashattn=False,
         enable_layernorm_kernel=False,
         enable_sequence_parallelism=False,
-        cross_frame_attn = None,
+        spatial_attn_enhance = None,
         t_win_size : int = 0,
-        is_causal: bool = True
+        is_causal: bool = True, # this is deprecated, we always set is_causal=True
+        # cross_frame_attn = None, # this is deprecated, we re-name it as `spatial_attn_enhance`
     ):
         super().__init__()
         self.hidden_size = hidden_size
         self.enable_flashattn = enable_flashattn
         self._enable_sequence_parallelism = enable_sequence_parallelism
-        assert (cross_frame_attn in ["first_frame","last_prefix",None]) or cross_frame_attn.startswith("prev_prefix_")
-        self.cross_frame_attn = cross_frame_attn
+        # assert (cross_frame_attn in ["first_frame","last_prefix",None]) or cross_frame_attn.startswith("prev_frames_")
+        assert spatial_attn_enhance in ["first_frame",None] or spatial_attn_enhance.startswith("prev_frames_")
+        self.spatial_attn_enhance = spatial_attn_enhance
+        self.spatial_attn_ctx_len = 1 if spatial_attn_enhance=="first_frame" else int(spatial_attn_enhance.split('_')[-1]) # e.g., prev_frames_3
+        
         self.t_win_size = t_win_size
         self.input_size = input_size
         self.patch_size = patch_size
 
 
         if enable_sequence_parallelism:
-            temp_attn_cls = SeqParallelCausalSelfAttention if is_causal else SeqParallelAttention
+            temp_attn_cls = SeqParallelAttentionWithContext
             cross_attn_cls = SeqParallelMultiHeadCrossAttention
         else:
-            temp_attn_cls = CausalSelfAttention if is_causal else Attention
+            temp_attn_cls = AttentionWithContext
             cross_attn_cls = MultiHeadCrossAttention
 
         self.norm1 = get_layernorm(hidden_size, eps=1e-6, affine=False, use_kernel=enable_layernorm_kernel)
-        self.attn = SpatialConditionAttention( # this does not need seq_parrallel
+        self.attn = AttentionWithContext( # this does not need seq_parrallel
             hidden_size,
             num_heads=num_heads,
             qkv_bias=True,
@@ -167,8 +170,8 @@ class CausalSTDiTBlock(nn.Module):
             enable_flash_attn=self.enable_flashattn
         )
 
-        if self.cross_frame_attn is not None:
-            self.attn_cf = SpatialConditionAttention(
+        if self.spatial_attn_enhance is not None:
+            self.attn_cf = AttentionWithContext(
                 hidden_size,
                 num_heads = num_heads,
                 qkv_bias=True,
@@ -240,25 +243,16 @@ class CausalSTDiTBlock(nn.Module):
         x = x + self.drop_path(gate_msa * x_s)
 
         ######### cross-frame attn spatial branch
-        if self.cross_frame_attn is not None:
+        if self.spatial_attn_enhance is not None:
             assert not self._enable_sequence_parallelism, "TODO"
-            cf_mode = self.cross_frame_attn
+            sae_mode = self.spatial_attn_enhance
             x_s_ = rearrange(x, "B (T S) C -> B T S C",T=T, S= S)
-            if cf_mode == "first_frame":
+            if sae_mode == "first_frame":
                 x_1st = x_s_[range(B),0,:,:] # (B, S, C)
                 spatial_cond = x_1st[:,None,:,:].repeat(1,T,1,1) # (B, T, S, C)
-            elif cf_mode == "last_prefix" :
-                prefix_len = mask_channel.sum(dim=[1,2,3,4]) # (b,1,f,1,1) --> (b,)
-                prefix_len == prefix_len.type(torch.long)
-                assert torch.all(prefix_len >= 1)
-                last_prefix = x_s_[range(B), prefix_len-1,:,:] # (B, S, C)
-                spatial_cond = torch.where(
-                    mask_channel[:,0,:,:,:].expand_as(x_s_).type(torch.bool), # (B, T, 1,1) -> (B, T, S, C)
-                    x_s_,
-                    last_prefix[:,None,:,:].repeat(1,T,1,1) # (B,T, S,C)
-                )
-            elif cf_mode.startswith("prev_prefix_"): # e.g., prev_prefix_3
-                assert (prev_L := int(cf_mode.split('_')[-1])) >=1
+            
+            elif sae_mode.startswith("prev_frames_"): # e.g., prev_frames_3
+                assert (prev_L := int(sae_mode.split('_')[-1])) >=1
                 prefix_len = mask_channel.sum(dim=[1,2,3,4]) # (b,1,f,1,1) --> (b,)
                 prefix_len == prefix_len.type(torch.long)
                 assert torch.all(prefix_len >= 1)
@@ -275,7 +269,7 @@ class CausalSTDiTBlock(nn.Module):
                     prev_prefix[:,None,:,:].repeat(1,T,1,1) # B T (prev_L S) C 
                 )
             else:
-                raise NotImplementedError(f"self.cross_frame_attn={cf_mode} is not implemented")
+                raise NotImplementedError(f"self.spatial_attn_enhance={sae_mode} is not implemented")
             
             spatial_cond = rearrange(spatial_cond,"B T S C -> (B T) S C", T =T)
 
@@ -322,91 +316,8 @@ class CausalSTDiTBlock(nn.Module):
 
         return x
 
-    def write_kv_cache(self,clean_x, start_id, t0, tpe, mask_channel):
-        assert self.is_causal
-        # clean_x: (b, f*h*w, c); f=window_size (chunk_len) for each auto-regre step
-
-        B, N, C = clean_x.shape
-        H, W = [self.input_size[i] // self.patch_size[i] for i in [1,2]] #
-        S = H *  W
-        T = N // S # window_size 
-
-        shift_msa, scale_msa, gate_msa, shift_mlp, scale_mlp, gate_mlp = (
-            self.scale_shift_table[None] + t0.reshape(B, 6, -1) # (1, 6, C) + (B, 6, C) --> (B, 6, C)
-        ).chunk(6, dim=1) # each one has shape (B, 1, C)
-
-        x = clean_x
-        x_m = t2i_modulate(self.norm1(x), shift_msa, scale_msa) # (B, N, C) x (B, 1, C) -> (B, N, C)
-
-        ######### spatial branch
-        x_s = rearrange(x_m, "B (T S) C -> (B T) S C", T=T, S=S)
-        x_s = self.attn(x_s)
-        x_s = rearrange(x_s, "(B T) S C -> B (T S) C", T=T, S=S)
-        x = x + self.drop_path(gate_msa * x_s)
-
-        ######### cross-frame attn spatial branch
-        if self.cross_frame_attn is not None:
-            assert not self._enable_sequence_parallelism, "TODO"
-            cf_mode = self.cross_frame_attn
-            x_s_ = rearrange(x, "B (T S) C -> B T S C",T=T, S= S)
-
-            if cf_mode == "first_frame":
-                if not self.attn_cf._first_frame_kv_cache_writed:
-                    x_1st = x_s_[range(B),0,:,:] # (B, S, C)
-                    self.attn_cf.write_kv_cache(x_1st,cf_mode) # NOTE this should only write once (at the first call of `write_kv_cache`)
-                spatial_cond = self.attn_cf.x_1st[:,None,:,:].repeat(1,T,1,1) # (B, T, S, C)
-            
-            elif cf_mode == "last_prefix" :
-                last_prefix = x_s_[range(B), -1,:,:] # (B, S, C)
-                self.attn_cf.write_kv_cache(last_prefix,cf_mode)
-                spatial_cond = x_s_ # mask_channel is all ones, prefix's spatial_cond is just itself
-                
-            elif cf_mode.startswith("prev_prefix_"): # e.g., prev_prefix_3
-                assert (prev_L := int(cf_mode.split('_')[-1])) >=1
-                prefix_len = T
-                prev_prefix = []
-                for i in range(prev_L):
-                    _i = T - 1 - i
-                    _i = max(_i,0)
-                    prev_prefix.append(x_s_[range(B), _i, :,:]) # (B, S, C)
-                prev_prefix = torch.cat(prev_prefix,dim=1) # (B, prev_L*S, C)
-                self.attn_cf.write_kv_cache(prev_prefix,cf_mode)
-                
-                _x_s_repeat = x_s_.repeat(1,1,prev_L,1) # B T (prev_L S) C
-                spatial_cond = _x_s_repeat
-            else:
-                raise NotImplementedError(f"self.cross_frame_attn={cf_mode} is not implemented")
-            
-            spatial_cond = rearrange(spatial_cond,"B T S C -> (B T) S C", T =T)
-
-            x_s_ = rearrange(x_s_,"B T S C -> (B T) S C", T =T, S = S)
-            x_s_ = self.attn_cf(x_s_, kv_spatial_cond = spatial_cond) # here we use the original forward to get output for attn_temp below
-            x_s_ = rearrange(x_s_, "(B T) S C -> B (T S) C")
-
-            x =  x + self.drop_path(gate_msa * x_s_)
-
-        ######### temporal branch
-        x_t = rearrange(x, "B (T S) C -> (B S) T C", T=T, S=S)
-        if tpe is not None:
-            x_t = x_t + tpe
-        
-        inject_mask_channel = self.temp_extra_in_channels > 0 # TODO: maybe inject other input (channel-wise concat)
-        if inject_mask_channel:
-            b,_,f,_,_ = mask_channel.shape
-            mask_channel = mask_channel.reshape(b,1,f,1).repeat(1, S, 1, 1) # (B, S, T, 1)
-            mask_channel = rearrange(mask_channel, "B S T C -> (B S) T C")
-            assert mask_channel.shape[:2] == x_t.shape[:2]
-
-            x_t = torch.cat([x_t,mask_channel],dim=-1) # (B S) T C+1
-            x_t = self.attn_temp_pre_merge(x_t) # (B S) T C  == (b*h*w, ws, c)
-
-        # before write: cached kv: [0:start_id)
-        self.attn_temp.write_kv_cache(x_t,start_id) # range to write: [start_id:start_id+ws]
-        # after write: cache kv: [0:start_id+ws]
-
-        
-
-    def forward_kv_cache(self,x, start_id, y, t, mask=None,tpe=None,mask_channel=None):
+    
+    def forward_kv_cache(self,x, y, t, mask=None,tpe=None, mask_channel=None, cached_kv=(None,None), return_kv=False,return_kv_only=False):
         '''
         x: (b,f*h*w,c)
         t: diffusion timestep's emb: (b,c*6) or (b,f,c*6)
@@ -427,21 +338,54 @@ class CausalSTDiTBlock(nn.Module):
 
         x_m = t2i_modulate(self.norm1(x), shift_msa, scale_msa) # (B, N, C) x (B, 1, C) -> (B, N, C)
 
-        ######### spatial branch
+        # =======================================================================
+        # spatial branch
+        # =======================================================================
         x_s = rearrange(x_m, "B (T S) C -> (B T) S C", T=T, S=S)
         x_s = self.attn(x_s)
         x_s = rearrange(x_s, "(B T) S C -> B (T S) C", T=T, S=S)
         x = x + self.drop_path(gate_msa * x_s)
 
-        ######### cross-frame attn spatial branch
+        cached_kv_s,cached_kv_t = cached_kv
+        if cached_kv_s is not None:
+            T_p = cached_kv_s.shape[1] # B T_p S C*2
+            assert T_p == self.spatial_attn_ctx_len
+            # n_ctx_frames = 1 if sae_mode =="first_frame" else int(sae_mode.split('_')[-1]) # e.g., prev_frames_3
+        if cached_kv_t is not None:
+            T_accu = cached_kv_t.shape[1] # B T_accu S C*2
+
+        # =======================================================================
+        # cross-frame attn spatial branch
+        # =======================================================================
         if self.cross_frame_attn is not None:
-            x_s_ = rearrange(x, "B (T S) C -> B T S C",T=T,S=S)
-            x_s_ = self.attn_cf.forward_kv_cache(x_s_,mode=self.cross_frame_attn)
-            # NOTE: here spatial_cond is from clean_prefix (cached kv inside self.attn_cf)
-            x_s_ = rearrange(x_s_,"(B T) S C -> B (T S) C",T=T, S= S)
-            x = x + self.drop_path(gate_msa * x_s_)
+            x_s = rearrange(x, "B (T S) C -> (B T) S C",T=T,S=S)
+            if cached_kv_s is not None: # this can be None when writing 1st frame to cache
+                cached_kv_s: torch.Tensor # B T_p S C; T_p = prev_L
+                cached_kv_s = rearrange(cached_kv_s,"B T S C -> B (T S) C")
+                cached_kv_s = cached_kv_s[:,None,:,:].repeat_interleave(T,dim=1) # B T (T_p S) C*2
+                cached_kv_s = rearrange(cached_kv_s,"B T S C -> (B T) S C", T=T) # (B T) (T_p S) C*2
+
+            x_s, spatial_kv = self.attn_cf(x_s,kv_context=cached_kv_s,return_kv = True)
+            spatial_kv = rearrange(spatial_kv,"(B T) S C -> B T S C",T=T, S= S)
+            
+            if self.spatial_attn_enhance == "first_frame":
+                spatial_kv = spatial_kv[:,:1,:,:]  # B 1 S C*2
+                # NOTE here `:1` index the relative 1st frame of the current chunk
+                # , so `spatial_kv` will only be written once for the 1st call (the true 1st frame of the video)
+                # refer to `CausalSTDiT2.write_kv_cache`
+            else:
+                if T < (T_p:=self.spatial_attn_ctx_len):
+                    # e.g., T==1 for write 1st frame to cache
+                    spatial_kv = spatial_kv.repeat_interleave(T_p//T+1,dim=1)[:,:T_p,:,:]
+                else:
+                    spatial_kv = spatial_kv[:,-T_p:,:,:]  # B T_p S C*2
+
+            x_s = rearrange(x_s,"(B T) S C -> B (T S) C",T=T, S= S)
+            x = x + self.drop_path(gate_msa * x_s)
         
-        ######### temporal branch
+        # =======================================================================
+        # temporal branch
+        # =======================================================================
         x_t = rearrange(x, "B (T S) C -> (B S) T C", T=T, S=S)
         if tpe is not None:
             x_t = x_t + tpe
@@ -456,10 +400,19 @@ class CausalSTDiTBlock(nn.Module):
             x_t = torch.cat([x_t,mask_channel],dim=-1) # (B S) T C+1
             x_t = self.attn_temp_pre_merge(x_t) # (B S) T C  == (b*h*w, ws, c)
         
-        x_t = self.attn_temp.forward_kv_cache(x_t,start_id)
+        if cached_kv_t is not None:
+            cached_kv_t = rearrange(cached_kv_t,"B T S C -> (B S) T C", T=T_accu)
+
+        x_t,temporal_kv = self.attn_temp(x_t,kv_context=cached_kv_t,return_kv = True)
         x_t = rearrange(x_t,"(B S) T C -> B (T S) C", T=T, S=S)
+        temporal_kv = rearrange(temporal_kv,"(B S) T C -> B T S C", T=T, S=S)
+        
         x = x + self.drop_path(gate_msa * x_t)
         
+        if return_kv and return_kv_only:
+            # for the last block (save the computation of cross-attn)
+            return None,spatial_kv,temporal_kv
+
         ######### cross-attn
         if self._enable_sequence_parallelism:
             # avoid using seq parallel
@@ -470,10 +423,17 @@ class CausalSTDiTBlock(nn.Module):
         # mlp
         x = x + self.drop_path(gate_mlp + self.mlp(t2i_modulate(self.norm2(x),shift_mlp,scale_mlp)))
 
-        return x
+        if return_kv:
+            return (
+                x, 
+                spatial_kv, # B T_p S C*2
+                temporal_kv # B T S C*2
+            )
+        else:
+            return x
 
 @MODELS.register_module()
-class CausalSTDiT(nn.Module):
+class CausalSTDiT2(nn.Module):
     def __init__(
         self,
         input_size=(16, 32, 32),
@@ -500,6 +460,7 @@ class CausalSTDiT(nn.Module):
         enable_flashattn=False,
         enable_layernorm_kernel=False,
         enable_sequence_parallelism=False,
+        spatial_attn_enhance = None,
         cross_frame_attn = None,
         t_win_size : int = 0,
         is_causal: bool = True
@@ -554,7 +515,7 @@ class CausalSTDiT(nn.Module):
         drop_path = [x.item() for x in torch.linspace(0, drop_path, depth)]
         self.blocks = nn.ModuleList(
             [
-                CausalSTDiTBlock(
+                CausalSTDiT2Block(
                     self.hidden_size,
                     self.num_heads,
                     self.input_size,
@@ -565,7 +526,7 @@ class CausalSTDiT(nn.Module):
                     enable_layernorm_kernel=self.enable_layernorm_kernel,
                     enable_sequence_parallelism=enable_sequence_parallelism,
                     temp_extra_in_channels = temp_extra_in_channels if (i==0 or temp_extra_in_all_block) else 0,
-                    cross_frame_attn=cross_frame_attn,
+                    spatial_attn_enhance=spatial_attn_enhance,
                     t_win_size = t_win_size,
                     is_causal= is_causal
                 )
@@ -573,6 +534,13 @@ class CausalSTDiT(nn.Module):
             ]
         )
         self.temp_extra_in_all_block = temp_extra_in_all_block
+        if (cross_frame_attn is not None) and (spatial_attn_enhance is None):
+            # support old-version code
+            spatial_attn_enhance = cross_frame_attn
+        
+        self.spatial_attn_enhance = spatial_attn_enhance
+        assert spatial_attn_enhance in ["first_frame",None] or spatial_attn_enhance.startswith("prev_frames_") # e.g., prev_frames_3
+
 
         self.final_layer = T2IFinalLayerExpand(hidden_size,np.prod(self.patch_size),self.out_channels)
 
@@ -757,25 +725,156 @@ class CausalSTDiT(nn.Module):
                 block.attn_cf._first_frame_kv_cache_writed = False
     
     def empty_kv_cache(self):
-        for i,block in enumerate(self.blocks):
-            if  block.attn_temp._kv_cache_registered:
-                del block.attn_temp.cache_k
-                del block.attn_temp.cache_v
-                block.attn_temp._kv_cache_registered = False
-            
-            if hasattr(block,"attn_cf"):
-                if block.attn_cf._kv_cache_registered: # 只有 prev_L 帧的 kvcache，占用显存不大
-                    del block.attn_cf.cache_k
-                    del block.attn_cf.cache_v
-                    block.attn_cf._kv_cache_registered = False
+        # empty kv-cache to save GPU memory
+        # self.cache_kv.zero_()
+        # self.cache_indicator.zero_()
+        del self.cache_kv
+        del self.cache_indicator
 
-                if block.attn_cf._first_frame_kv_cache_writed:
-                    del block.attn_cf.x_1st
-                    block.attn_cf._first_frame_kv_cache_writed = False
+        if self.spatial_attn_enhance is not None:
+            # self.spatial_ctx_kv.zero_()
+            del self.spatial_ctx_kv
 
+            if self.spatial_attn_enhance =="first_frame":
+                self._1st_frame_kv_written = False
+
+        self._kv_cache_registered = False
 
     @torch.no_grad()
-    def write_kv_cache(self,clean_x,y,mask,start_id):
+    def write_kv_cache(self,clean_x,y,mask,start_id): 
+        # support old version code
+
+        cached_len = self.cache_indicator.sum().item()
+        assert start_id == cached_len
+
+        self.write_latents_to_cache(clean_x,y,mask)
+
+    
+    def pre_allocate_kv_cache(self,bsz,device,dtype,max_seq_len=None,kv_cache_dequeue=True):
+        # support old version code
+
+        self.register_kv_cache(bsz,device,dtype,max_seq_len,kv_cache_dequeue)
+
+    def register_kv_cache(self,bsz,device,dtype,max_seq_len=None,kv_cache_dequeue=True):
+        B = bsz
+        S = self.num_saptial
+        C = self.hidden_size
+
+        if max_seq_len is None:
+            max_seq_len = self.KV_CACHE_MAX_SEQLEN
+            kv_cache_dequeue = True
+        
+        cache_kv = torch.zeros(
+            size=(self.depth, B, max_seq_len, S, C*2),
+            device=device,dtype=dtype
+        )
+        cache_indicator = torch.zeros(size=(max_seq_len,),device=device,dtype=torch.long)
+
+        self.register_buffer("cache_kv",cache_kv,persistent=False) # (depth, B, max_seqlen,S, C*2)
+        self.register_buffer("cache_indicator",cache_indicator,persistent=False) # (max_seqlen,)
+        if envs.DEBUG_KV_CACHE:
+            cache_ids = torch.as_tensor(list(range(max_seq_len))).to(device)
+            self.register_buffer("cache_ids",cache_ids,persistent=False)
+
+        self._kv_cache_registered = True
+        self.kv_cache_dequeue = kv_cache_dequeue
+        print(f"kv cache pre allocated, self.cache_kv : {self.cache_kv.shape}")
+
+        if (sae_mode := self.spatial_attn_enhance) is not None:
+            n_ctx_frames = 1 if sae_mode =="first_frame" else int(sae_mode.split('_')[-1]) # e.g., prev_frames_3
+            spatial_ctx_kv = torch.zeros(
+                size=(self.depth, B, n_ctx_frames, S, C*2),
+                device=device,dtype=dtype
+            )
+            self.register_buffer("spatial_ctx_kv",spatial_ctx_kv,persistent=False) 
+            if sae_mode =="first_frame":
+                self._1st_frame_kv_written = False
+            print(f"spatial_attn_enhance context kv pre allocated, with shape: {self.spatial_ctx_kv.shape}")
+
+    
+    def _fetch_kv_cache(self):
+        
+        cached_len = self.cache_indicator.sum().item()
+        if self.spatial_attn_enhance == "first_frame":
+            assert self._1st_frame_kv_written == (cached_len > 0)
+        if cached_len == 0:
+            return None,None
+        
+        if self.spatial_attn_enhance is not None:
+            spatial_kv = self.spatial_ctx_kv
+        else:
+            spatial_kv = None
+
+
+        if cached_len > len(self.cache_indicator): # this happens if kv_cache_dequeue
+            cached_len = len(self.cache_indicator)
+        
+        temporal_kv = self.cache_kv[:,:,:cached_len,:,:] # D B T_accu S C
+        if envs.DEBUG_KV_CACHE: 
+            fetched_cache_ids = self.cache_ids[:cached_len]
+            print(f"fetched_cache_ids = {fetched_cache_ids}, cached_len={cached_len}")
+        
+        return (
+            spatial_kv, # B T_p S C*2
+            temporal_kv # B T_accu S C*2
+        )
+
+    def _write_kv_cache(self,spatial_kv,temporal_kv):
+        ''' to write:
+        # spatial_kv  # D B T_p S C*2
+        # temporal_kv # D B T S C*2      (D=self.depth)
+        '''
+
+        ## for spatial kv
+        B = spatial_kv.shape[2]
+        if self.spatial_attn_enhance == "first_frame":
+            if self._1st_frame_kv_written:
+                # NOTE only write once for SAE mode == "first_frame"
+                return
+            else:
+                self.spatial_ctx_kv[:,:B,:,:,:] = spatial_kv
+                self._1st_frame_kv_written = True
+        else:
+            self.spatial_ctx_kv[:,:B,:,:,:] = spatial_kv
+            # we use `:B` in case that the last batch from dataloader has a smaller batch_size
+        
+
+        ## for temporal kv
+        _,B,len_to_write = temporal_kv.shape[:3] # D B T S C*2
+
+        cached_len = self.cache_indicator.sum().item() # cache_indicator can be [1,1,1,1,1,5], i.e., cached_len can > len(cache_indicator)
+        if cached_len + len_to_write > len(self.cache_indicator):
+            print(" >>> kv_cache_dequeue")
+
+            if cached_len < len(self.cache_indicator):
+                # this will happen when len_to_write > 1
+                n_dequeue = cached_len + len_to_write - len(self.cache_indicator) # This is WRONG for a very large cached_len (i.e., dequeue to mach)
+            else:
+                # for cached_len == len(self.cache_indicator) 
+                # or cached_len > len(self.cache_indicator) # cached_len can be very large
+                n_dequeue = len_to_write
+            
+            self.cache_kv = torch.roll(self.cache_kv,-n_dequeue,dims=2)
+            self.cache_kv[:,:B,-len_to_write:,:,:] = temporal_kv
+            self.cache_indicator[-len_to_write] += 1
+            if envs.DEBUG_KV_CACHE:
+                self.cache_ids = torch.roll(self.cache_ids,-n_dequeue,dims=2)
+                cache_ids_to_write = self.cache_ids[-len_to_write]
+        
+        else:
+            self.cache_kv[:,:B,cached_len:cached_len+len_to_write,:,:] = temporal_kv
+            # we use `:B` in case that the last batch from dataloader has a smaller batch_size
+            self.cache_indicator[cached_len:cached_len+len_to_write] +=1
+            if envs.DEBUG_KV_CACHE:
+                cache_ids_to_write = self.cache_ids[cached_len:cached_len+len_to_write]
+        
+        if envs.DEBUG_KV_CACHE:
+            print(f"cache_ids_to_write: {cache_ids_to_write}")
+            print(f"after write_kv_cache, cache_indicator={self.cache_indicator}")
+            
+
+    @torch.no_grad()
+    def write_latents_to_cache(self,clean_x,y,mask):
         '''only write kv cache once after finish the whole denoising loop (use clean_x)
         # clean_x.shape: (B, C, T, H, W)
         # build timestep embedding with all t0's embedding
@@ -815,24 +914,38 @@ class CausalSTDiT(nn.Module):
 
 
         # blocks
+        spatial_kv,temporal_kv = self._fetch_kv_cache() # this can be None for the 1st call (i.e., write the given 1st frame to kv-cache)
+        # spatial_kv,  # (depth, B, T_p, S, C*2)
+        # temporal_kv  # (depth, B, T_accu, S, C*2)
+        
+        kv_cache_to_write = []
+        cached_len = self.cache_indicator.sum().item()
         for i, block in enumerate(self.blocks):
+            block:CausalSTDiT2Block
             if i == 0:
-                tpe = self.get_relative_tpe(start_id+num_temporal)
-                tpe = tpe[:,start_id:start_id+num_temporal,:]
+                tpe = self.get_relative_tpe(cached_len+num_temporal)
+                tpe = tpe[:,cached_len:cached_len+num_temporal,:]
                 mask_channel_input = mask_channel
             else:
                 tpe = None
                 mask_channel_input = mask_channel if self.temp_extra_in_all_block else None
-
-            # before write: cache kv: [0:start_id]
-            block.write_kv_cache(x,start_id,t_mlp,mask_channel_input)
-            # after write: cache kv: [0:start_id+ws]
             
-            x = block.forward_kv_cache(x, start_id, y, t_mlp, y_lens, tpe, mask_channel_input) # attn map: (ws, ws+cache_L)
-            # input seqlen: ws; attn map: (ws, ws+cache_L); output seqlen: ws
-            # NOTE 这里的forward， 上一行刚写入的cache还没有用上，这里用到的cache 是前一步 auto-regression step 的cache
-            # 如果 start_id=0 (即，初始forward given gt img的情况)，相当于不用cache
-            # 这里返回的x会被用于下一个block 的 write_kv_cache， 所以从第二个block开始，kv-cache都是见过text的
+            cached_kv_s = None if spatial_kv is None else spatial_kv[i]
+            cached_kv_t = None if temporal_kv is None else temporal_kv[i]
+            cached_kv = (cached_kv_s,cached_kv_t)
+
+            x, spatial_kv,temporal_kv = block.forward_kv_cache(
+                x, y, t_mlp, y_lens, tpe, mask_channel_input, cached_kv=cached_kv,
+                return_kv=True, return_kv_only = (i == len(self.blocks)-1)
+            )
+            kv_cache_to_write.append((
+                spatial_kv,     # (B, T_p, S, C*2) 
+                temporal_kv,    # (B, T, S, C*2) 
+            ))
+        spatial_kv  = torch.stack([st_kv[0] for st_kv in  kv_cache_to_write],dim=0) # (depth, B, T_p, S, C*2)
+        temporal_kv = torch.stack([st_kv[1] for st_kv in  kv_cache_to_write],dim=0) # (depth, B, T, S, C*2)
+        self._write_kv_cache(spatial_kv,temporal_kv)
+        
     
     @torch.no_grad()
     def forward_kv_cache(self,x,timestep,y,mask,start_id):
@@ -842,7 +955,7 @@ class CausalSTDiT(nn.Module):
         # i.e., training with seq parallel, and `block.temp_attn` is `SeqParallelCausalSelfAttention`
         # but we don't use seq parallel at inference time,  
         # TODO: consider seq parallel
-        
+         
         num_temporal = x.shape[2]
         assert self.patch_size[0] == 1
 
@@ -850,7 +963,6 @@ class CausalSTDiT(nn.Module):
         timestep = timestep.to(self.dtype)
         y = y.to(self.dtype)
         mask_channel = torch.zeros_like(x[:,:1,:,:1,:1]) # (B, 1, T, 1, 1)
-
 
 
         # embedding
@@ -877,26 +989,36 @@ class CausalSTDiT(nn.Module):
 
 
         # blocks
+        spatial_kv,temporal_kv = self._fetch_kv_cache() # this can be None for the 1st call (i.e., write the given 1st frame to kv-cache)
+        # spatial_kv,  # (depth, B, T_p, S, C*2)
+        # temporal_kv  # (depth, B, T_accu, S, C*2)
+        cached_len = self.cache_indicator.sum().item()
+        assert cached_len > 0 , "call `write_latents_to_cache` first"
+        assert temporal_kv is not None,  "call `write_latents_to_cache` first"
+        assert start_id == cached_len # start_id is used in old-version code, remove this ideally
+        
         for i, block in enumerate(self.blocks):
+            block:CausalSTDiT2Block
             if i == 0:
-                tpe = self.get_relative_tpe(start_id+num_temporal)
-                tpe = tpe[:,start_id:start_id+num_temporal,:]
+                tpe = self.get_relative_tpe(cached_len+num_temporal)
+                tpe = tpe[:,cached_len:cached_len+num_temporal,:]
                 mask_channel_input = mask_channel
             else:
                 tpe = None
                 mask_channel_input = mask_channel if self.temp_extra_in_all_block else None
-    
-            x = block.forward_kv_cache(x,start_id, y, t_mlp, y_lens, tpe, mask_channel_input)
+
+            cached_kv_s = None if spatial_kv is None else spatial_kv[i]  # it can be None when spatial_attn_enhance is None
+            cached_kv_t = temporal_kv[i]
+            cached_kv = (cached_kv_s,cached_kv_t)
+
+            x = block.forward_kv_cache(x, y, t_mlp, y_lens, tpe, mask_channel_input,cached_kv=cached_kv, return_kv=False)
 
         
         # final process
         x = self.final_layer(x, t,num_temporal=num_temporal)  # [B, N, C=T_p * H_p * W_p * C_out]
-        
         input_size = (num_temporal, self.input_size[1], self.input_size[2])
         x = self.unpatchify(x,input_size)  # [B, C_out, T, H, W]
-
-        # cast to float32 for better accuracy
-        x = x.to(torch.float32)
+        x = x.to(torch.float32) # cast to float32 for better accuracy
         return x
     
     def unpatchify(self, x):
@@ -1013,9 +1135,9 @@ class CausalSTDiT(nn.Module):
         nn.init.constant_(self.final_layer.linear.bias, 0)
 
 
-@MODELS.register_module("CausalSTDiT-XL/2")
-def CausalSTDiT_XL_2(from_pretrained=None,from_scratch=None, **kwargs):
-    model = CausalSTDiT(depth=28, hidden_size=1152, patch_size=(1, 2, 2), num_heads=16, **kwargs)
+@MODELS.register_module("CausalSTDiT2-XL/2")
+def CausalSTDiT2_XL_2(from_pretrained=None,from_scratch=None, **kwargs):
+    model = CausalSTDiT2(depth=28, hidden_size=1152, patch_size=(1, 2, 2), num_heads=16, **kwargs)
     if from_pretrained is not None:
         load_checkpoint(model, from_pretrained)
     if from_scratch is not None:
