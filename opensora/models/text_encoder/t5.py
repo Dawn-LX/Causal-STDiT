@@ -29,7 +29,7 @@ import torch
 from transformers import AutoTokenizer, T5EncoderModel
 
 from opensora.registry import MODELS
-
+from opensora.utils.debug_utils import envs
 
 class T5Embedder:
     available_models = ["DeepFloyd/t5-v1_1-xxl"]
@@ -99,18 +99,27 @@ class T5Embedder:
         self.use_text_preprocessing = use_text_preprocessing
         self.hf_token = hf_token
 
-        assert from_pretrained in self.available_models
+        # assert from_pretrained in self.available_models
         self.tokenizer = AutoTokenizer.from_pretrained(
             from_pretrained,
             cache_dir=cache_dir,
             local_files_only=local_files_only,
         )
-        self.model = T5EncoderModel.from_pretrained(
-            from_pretrained,
-            cache_dir=cache_dir,
-            local_files_only=local_files_only,
-            **t5_model_kwargs,
-        ).eval()
+        if envs.DEBUG_WITHOUT_LOAD_PRETRAINED:
+            assert use_offload_folder is None
+            from transformers.modeling_utils import no_init_weights
+            
+            _config = T5EncoderModel.config_class.from_pretrained(from_pretrained)
+            with no_init_weights() as _:
+                model = T5EncoderModel._from_config(_config).eval()
+            self.model = model.to(self.device)
+        else:
+            self.model = T5EncoderModel.from_pretrained(
+                from_pretrained,
+                cache_dir=cache_dir,
+                local_files_only=local_files_only,
+                **t5_model_kwargs,
+            ).eval()
         self.model_max_length = model_max_length
 
     def get_text_embeddings(self, texts):
