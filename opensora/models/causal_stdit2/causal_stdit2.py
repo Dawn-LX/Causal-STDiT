@@ -10,11 +10,9 @@ from opensora.acceleration.checkpoint import auto_grad_checkpoint
 from opensora.acceleration.communications import gather_forward_split_backward, split_forward_gather_backward
 from opensora.acceleration.parallel_states import get_sequence_parallel_group
 from opensora.models.layers.blocks import (
-    Attention,
     CaptionEmbedder,
     MultiHeadCrossAttention,
     PatchEmbed3D,
-    SeqParallelAttention,
     SeqParallelMultiHeadCrossAttention,
     T2IFinalLayer,
     TimestepEmbedder,
@@ -152,7 +150,7 @@ class CausalSTDiT2Block(nn.Module):
             hidden_size,
             num_heads=num_heads,
             qkv_bias=True,
-            enable_flashattn=enable_flashattn,
+            enable_flash_attn=enable_flashattn,
         )
         self.cross_attn = cross_attn_cls(hidden_size, num_heads)
         self.norm2 = get_layernorm(hidden_size, eps=1e-6, affine=False, use_kernel=enable_layernorm_kernel)
@@ -254,7 +252,7 @@ class CausalSTDiT2Block(nn.Module):
             elif sae_mode.startswith("prev_frames_"): # e.g., prev_frames_3
                 assert (prev_L := int(sae_mode.split('_')[-1])) >=1
                 prefix_len = mask_channel.sum(dim=[1,2,3,4]) # (b,1,f,1,1) --> (b,)
-                prefix_len == prefix_len.type(torch.long)
+                prefix_len = prefix_len.type(torch.long)
                 assert torch.all(prefix_len >= 1)
                 prev_prefix = []
                 for i in range(prev_L):
@@ -274,8 +272,8 @@ class CausalSTDiT2Block(nn.Module):
             spatial_cond = rearrange(spatial_cond,"B T S C -> (B T) S C", T =T)
 
             x_s_ = rearrange(x_s_,"B T S C -> (B T) S C", T =T, S = S)
-            x_s_ = self.attn_cf(x_s_, kv_spatial_cond = spatial_cond)
-            x_s_ = rearrange(x_s_, "(B T) S C -> B (T S) C")
+            x_s_ = self.attn_cf(x_s_, context = spatial_cond, is_ctx_as_kv=False)
+            x_s_ = rearrange(x_s_, "(B T) S C -> B (T S) C", T =T, S = S)
 
             x =  x + self.drop_path(gate_msa * x_s_)
 
@@ -365,7 +363,7 @@ class CausalSTDiT2Block(nn.Module):
                 cached_kv_s = cached_kv_s[:,None,:,:].repeat_interleave(T,dim=1) # B T (T_p S) C*2
                 cached_kv_s = rearrange(cached_kv_s,"B T S C -> (B T) S C", T=T) # (B T) (T_p S) C*2
 
-            x_s, spatial_kv = self.attn_cf(x_s,kv_context=cached_kv_s,return_kv = True)
+            x_s, spatial_kv = self.attn_cf(x_s,context=cached_kv_s, is_ctx_as_kv=True,return_kv = True)
             spatial_kv = rearrange(spatial_kv,"(B T) S C -> B T S C",T=T, S= S)
             
             if self.spatial_attn_enhance == "first_frame":
@@ -403,7 +401,7 @@ class CausalSTDiT2Block(nn.Module):
         if cached_kv_t is not None:
             cached_kv_t = rearrange(cached_kv_t,"B T S C -> (B S) T C", T=T_accu)
 
-        x_t,temporal_kv = self.attn_temp(x_t,kv_context=cached_kv_t,return_kv = True)
+        x_t,temporal_kv = self.attn_temp(x_t,context=cached_kv_t,is_ctx_as_kv=True,return_kv = True)
         x_t = rearrange(x_t,"(B S) T C -> B (T S) C", T=T, S=S)
         temporal_kv = rearrange(temporal_kv,"(B S) T C -> B T S C", T=T, S=S)
         
@@ -449,11 +447,10 @@ class CausalSTDiT2(nn.Module):
         no_temporal_pos_emb=False,
         caption_channels=4096,
         model_max_length=120,
-        dtype=torch.float32,
         space_scale=1.0,
         time_scale=1.0,
         temp_extra_in_channels = 0,
-        temp_extra_in_all_block= False,
+        temp_extra_in_all_block= False, # TODO ideally remove this, we always set False
         temporal_max_len = 256, # auto-regression for max 256 frames (remove this when enable kv_cache dequeue)
         relative_tpe_mode = None,
         freeze=None,
@@ -461,11 +458,15 @@ class CausalSTDiT2(nn.Module):
         enable_layernorm_kernel=False,
         enable_sequence_parallelism=False,
         spatial_attn_enhance = None,
-        cross_frame_attn = None,
+        cross_frame_attn:str = None,
         t_win_size : int = 0,
         is_causal: bool = True
     ):
         super().__init__()
+        if (cross_frame_attn is not None) and (spatial_attn_enhance is None):
+            # support old-version code
+            spatial_attn_enhance = cross_frame_attn.replace("prev_prefix_","prev_frames_")
+
         self.is_causal = is_causal
         self.pred_sigma = pred_sigma
         self.in_channels = in_channels
@@ -482,7 +483,6 @@ class CausalSTDiT2(nn.Module):
         self.num_spatial = (input_size[1] // patch_size[1]) * (input_size[2] // patch_size[2])
 
         self.num_heads = num_heads
-        self.dtype = dtype
         self.no_temporal_pos_emb = no_temporal_pos_emb
         self.depth = depth
         self.mlp_ratio = mlp_ratio
@@ -534,9 +534,6 @@ class CausalSTDiT2(nn.Module):
             ]
         )
         self.temp_extra_in_all_block = temp_extra_in_all_block
-        if (cross_frame_attn is not None) and (spatial_attn_enhance is None):
-            # support old-version code
-            spatial_attn_enhance = cross_frame_attn
         
         self.spatial_attn_enhance = spatial_attn_enhance
         assert spatial_attn_enhance in ["first_frame",None] or spatial_attn_enhance.startswith("prev_frames_") # e.g., prev_frames_3
@@ -642,10 +639,13 @@ class CausalSTDiT2(nn.Module):
             num_temporal = x.shape[2]
             assert self.patch_size[0] == 1, "TODO, consdier temporal patchify for auto-regre infer"
 
-        x = x.to(self.dtype)
-        timestep = timestep.to(self.dtype)
-        y = y.to(self.dtype)
-        if mask_channel is not None: mask_channel = mask_channel.to(self.dtype)
+        device = self.x_embedder.proj.weight.device
+        dtype = self.x_embedder.proj.weight.dtype
+
+        x = x.to(dtype)
+        timestep = timestep.to(dtype)
+        y = y.to(dtype)
+        if mask_channel is not None: mask_channel = mask_channel.to(dtype)
 
 
         # embedding
@@ -749,7 +749,7 @@ class CausalSTDiT2(nn.Module):
         '''NOTE bsz should take account into cls_free_guidance'''
 
         device = self.pos_embed_temporal.device
-        dtype = self.dtype
+        dtype = self.pos_embed_temporal.dtype
 
         B = bsz
         S = self.num_spatial
@@ -876,9 +876,11 @@ class CausalSTDiT2(nn.Module):
         # build mask_channel with all ones
         '''
         assert self.relative_tpe_mode in ["offset","cyclic"], "# noqa for relative tpe mode == sample"
+        device = self.x_embedder.proj.weight.device
+        dtype = self.x_embedder.proj.weight.dtype
         
-        x = clean_x.to(self.dtype)
-        y = y.to(self.dtype)
+        x = clean_x.to(dtype)
+        y = y.to(dtype)
         num_temporal = x.shape[2]
 
         mask_channel = torch.ones_like(x[:,:1,:,:1,:1]) # (B, 1, T, 1, 1)
@@ -950,13 +952,16 @@ class CausalSTDiT2(nn.Module):
         # i.e., training with seq parallel, and `block.temp_attn` is `SeqParallelCausalSelfAttention`
         # but we don't use seq parallel at inference time,  
         # TODO: consider seq parallel
+
+        device = self.x_embedder.proj.weight.device
+        dtype = self.x_embedder.proj.weight.dtype
          
         num_temporal = x.shape[2]
         assert self.patch_size[0] == 1
 
-        x = x.to(self.dtype)
-        timestep = timestep.to(self.dtype)
-        y = y.to(self.dtype)
+        x = x.to(dtype)
+        timestep = timestep.to(dtype)
+        y = y.to(dtype)
         mask_channel = torch.zeros_like(x[:,:1,:,:1,:1]) # (B, 1, T, 1, 1)
 
 
@@ -1143,5 +1148,15 @@ def CausalSTDiT2_XL_2(from_pretrained=None,from_scratch=None, **kwargs):
         if from_scratch == "temporal":
             print(f"  >>> re-initialize {from_scratch} part, discard the pre-trained {from_scratch} part")
             model.initialize_temporal()
+    
+    return model
+
+
+# a tiny model for debug
+@MODELS.register_module("CausalSTDiT2-Tiny") 
+def CausalSTDiT2_Tiny(from_pretrained=None,from_scratch=None, **kwargs):
+    model = CausalSTDiT2(depth=2, hidden_size=1152, patch_size=(1, 2, 2), num_heads=16, **kwargs)
+    if from_pretrained is not None:
+        load_checkpoint(model, from_pretrained)
     
     return model

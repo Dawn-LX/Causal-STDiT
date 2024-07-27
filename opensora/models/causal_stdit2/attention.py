@@ -1,11 +1,15 @@
+import random
+import torch
+import numpy as np
 import torch
 import torch.nn as nn
 import torch.distributed as dist
+from einops import rearrange
 
-from opensora.models.layers.blocks import LlamaRMSNorm
 from opensora.acceleration.communications import all_to_all, split_forward_gather_backward
 from opensora.acceleration.parallel_states import get_sequence_parallel_group
 
+from opensora.models.layers.blocks import LlamaRMSNorm
 
 class AttentionWithContext(nn.Module):
     def __init__(
@@ -37,14 +41,15 @@ class AttentionWithContext(nn.Module):
 
         self.is_causal = is_causal
 
-    def forward(self, x: torch.Tensor, kv_context: torch.Tensor = None, return_kv:bool = False) -> torch.Tensor:
+    def forward(self, x: torch.Tensor, context: torch.Tensor = None, is_ctx_as_kv = False, return_kv=False) -> torch.Tensor:
         B, N, C = x.shape
         # flash attn is not memory efficient for small sequences, this is empirical
         # enable_flash_attn = self.enable_flash_attn and (N > B) # TODO
         qkv = self.qkv(x)
         if return_kv:
+            # used for inference w/ kv-cache
             kv_before_norm = qkv[:,:,C:].clone()  # (B,N,2*C)
-
+        
         qkv_shape = (B, N, 3, self.num_heads, self.head_dim)
         if self.enable_flash_attn:
             qkv_permute_shape = (2,0,1,3,4) # (3,B,N,num_heads,head_dim)
@@ -53,36 +58,31 @@ class AttentionWithContext(nn.Module):
         qkv = qkv.view(qkv_shape).permute(qkv_permute_shape)
         q, k, v = qkv.unbind(0)
 
-        if kv_context is not None:
+        if context is not None:
 
-            N_c = kv_context.shape[1]
-            # (B S) T_c C*2     (for temporal), T_c can be max_kv_cache_len
-            # (B T) (T_c S) C*2 (for spatial),  T_c is small, e.g., several previous frames
+            N_c = context.shape[1]
+            if is_ctx_as_kv:
+                # (B S) T_c C*2     (for temporal), T_c can be max_kv_cache_len
+                # (B T) (T_c S) C*2 (for spatial),  T_c is small, e.g., several previous frames
 
-            kv_shape = (B, N_c, 2, self.num_heads, self.head_dim)
-            kv = kv_context.view(kv_shape).permute(qkv_permute_shape)
-            extra_k,extra_v = kv.unbind(0)
+                kv_shape = (B, N_c, 2, self.num_heads, self.head_dim)
+                kv = context.view(kv_shape).permute(qkv_permute_shape)
+                extra_k,extra_v = kv.unbind(0)
 
-            cat_dim = 1 if self.enable_flash_attn else 2
-            k = torch.cat([extra_k,k],dim=cat_dim) # (B,N_c+N,num_heads,head_dim)
-            v = torch.cat([extra_v,v],dim=cat_dim)
-            '''# attn seqlen: 
-                for temporal_attn: N_c + N = T_c + T    
-                for spatial_attn:  N_c + N = T_c*S + S
-                NOTE the order matters for causal temporal_attn, we must let extra_k before k in `torch.cat`
-            '''
-        
-        # if return_kv:
-        #     # this is used for inference with kv-cache
+                cat_dim = 1 if self.enable_flash_attn else 2
+                k = torch.cat([extra_k,k],dim=cat_dim)
+                v = torch.cat([extra_v,v],dim=cat_dim)
+                '''# attn seqlen: 
+                    for temporal_attn: N_c + N = T_c + T    
+                    for spatial_attn:  N_c + N = T_c*S + S
+                    NOTE the order matters for causal temporal_attn, we must let extra_k before k in `torch.cat`
+                '''
+            else:
+                qkv = self.qkv(context)
+                qkv_shape = (B, N_c, 3, self.num_heads, self.head_dim)
+                qkv = qkv.view(qkv_shape).permute(qkv_permute_shape)
+                _,k,v = qkv.unbind(0) # overwrite k/v
             
-        #     kv_before_norm = torch.stack([k,v],dim=0).clone()  # (2,B,N,num_heads,head_dim)
-            
-        #     # we always make kv-cache in the shape of `enable_flash_attn`-stye
-        #     if not self.enable_flash_attn:
-        #         kv_before_norm = kv_before_norm.permute(0,1,3,2,4)
-        #         # (2,B,num_heads,N,head_dim) --> (2,B,N,num_heads,head_dim)
-            
-        
         q, k = self.q_norm(q), self.k_norm(k)
 
         if self.enable_flash_attn:
@@ -115,18 +115,16 @@ class AttentionWithContext(nn.Module):
         x = x.reshape(x_output_shape)
         x = self.proj(x)
         x = self.proj_drop(x)
-        
+
         if return_kv:
-            # kv_before_norm: (2,B,N,num_heads,head_dim)
             return x,kv_before_norm
-        
         else:
             return x
 
 
 class SeqParallelAttentionWithContext(AttentionWithContext):
 
-    def forward(self, x: torch.Tensor, kv_context: torch.Tensor = None, return_kv:bool = False) -> torch.Tensor:
+    def forward(self, x: torch.Tensor, context: torch.Tensor = None, is_ctx_as_kv = False, return_kv=False) -> torch.Tensor:
         sp_group = get_sequence_parallel_group()
         sp_size = dist.get_world_size(sp_group)
 
@@ -136,7 +134,6 @@ class SeqParallelAttentionWithContext(AttentionWithContext):
         if return_kv:
             kv_before_norm = qkv[:,:,C:].clone()
             assert False, "TODO: consider auto-regre for seq parallel"
-
         qkv_shape = (B, SUB_N, 3, self.num_heads, self.head_dim)
         qkv = qkv.view(qkv_shape)
 
@@ -154,25 +151,34 @@ class SeqParallelAttentionWithContext(AttentionWithContext):
         qkv = qkv.permute(qkv_permute_shape)
         q, k, v = qkv.unbind(0)
 
-        if kv_context is not None:
-            N_c = kv_context.shape[1]
-            # (B S) T_c C*2     (for temporal), T_c can be max_kv_cache_len
-            # (B T) (T_c S) C*2 (for spatial),  T_c is small, e.g., several previous frames
+        if context is not None:
 
-            kv_shape = (B, N_c, 2, self.num_heads, self.head_dim)
-            kv = kv_context.view(kv_shape)
-            kv = split_forward_gather_backward(kv,sp_group,dim=3, grad_scale="down") # [B*S T_c, 2, NUM_HEAD,  HEAD_DIM] -> [B*S T_c, 2, NUM_HEAD_PER_DEVICE, HEAD_DIM]
-            kv = kv.permute(qkv_permute_shape)
-            extra_k,extra_v = kv.unbind(0)
+            N_c = context.shape[1]
+            if is_ctx_as_kv:
+                # (B S) T_c C*2     (for temporal), T_c can be max_kv_cache_len
+                # (B T) (T_c S) C*2 (for spatial),  T_c is small, e.g., several previous frames
 
-            cat_dim = 1 if self.enable_flash_attn else 2
-            k = torch.cat([extra_k,k],dim=cat_dim)
-            v = torch.cat([extra_v,v],dim=cat_dim)
-            '''# attn seqlen: 
-                for temporal_attn: N_c + N = T_c + T    
-                for spatial_attn:  N_c + N = T_c*S + S
-                NOTE the order matters for causal temporal_attn, we must let extra_k before k in `torch.cat`
-            '''
+                kv_shape = (B, N_c, 2, self.num_heads, self.head_dim)
+                kv = context.view(kv_shape)
+                kv = split_forward_gather_backward(kv,sp_group,dim=3, grad_scale="down") # [B*S T_c, 2, NUM_HEAD,  HEAD_DIM] -> [B*S T_c, 2, NUM_HEAD_PER_DEVICE, HEAD_DIM]
+                kv = kv.permute(qkv_permute_shape)
+                extra_k,extra_v = kv.unbind(0)
+
+                cat_dim = 1 if self.enable_flash_attn else 2
+                k = torch.cat([extra_k,k],dim=cat_dim)
+                v = torch.cat([extra_v,v],dim=cat_dim)
+                '''# attn seqlen: 
+                    for temporal_attn: N_c + N = T_c + T    
+                    for spatial_attn:  N_c + N = T_c*S + S
+                    NOTE the order matters for causal temporal_attn, we must let extra_k before k in `torch.cat`
+                '''
+            else:
+                qkv = self.qkv(context)
+                qkv_shape = (B, N_c, 3, self.num_heads, self.head_dim)
+                qkv = qkv.view(qkv_shape)
+                qkv = all_to_all(qkv, sp_group, scatter_dim=3, gather_dim=1)
+                qkv = qkv.permute(qkv_permute_shape)
+                _,k,v = qkv.unbind(0) # overwrite k/v
             
         q, k = self.q_norm(q), self.k_norm(k)
 
@@ -212,7 +218,7 @@ class SeqParallelAttentionWithContext(AttentionWithContext):
         x = x.reshape(x_output_shape)
         x = self.proj(x)
         x = self.proj_drop(x)
-
+        
         if return_kv:
             return x, kv_before_norm
         else:
