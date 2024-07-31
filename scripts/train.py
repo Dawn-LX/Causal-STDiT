@@ -4,9 +4,10 @@ import random
 import os
 import gc
 from datetime import timedelta,datetime
-from pprint import pprint,pformat
+from pprint import pformat
 from easydict import EasyDict
 from tqdm import tqdm
+import math
 
 import torch
 import torch.distributed as dist
@@ -28,19 +29,22 @@ from opensora.acceleration.parallel_states import (
     set_sequence_parallel_group,
 )
 from opensora.acceleration.plugin import ZeroSeqParallelPlugin
-from opensora.datasets import prepare_dataloader, prepare_variable_dataloader,save_sample
+from opensora.datasets import prepare_dataloader,save_sample
+from opensora.datasets import video_transforms
+
 from opensora.registry import DATASETS, MODELS, SCHEDULERS, build_module
 from opensora.utils.ckpt_utils import create_logger, load, model_sharding, record_model_param_shape, save
-from opensora.utils.config_utils import (
-    create_experiment_workspace,
-    create_tensorboard_writer,
-    parse_configs,
-    save_training_config,
+from opensora.utils.config_utils import create_tensorboard_writer,save_training_config
+from opensora.utils.misc import (
+    all_reduce_mean, 
+    format_numel_str, 
+    get_model_numel, 
+    requires_grad, 
+    to_torch_dtype,
+    load_jsonl
 )
-from opensora.utils.misc import all_reduce_mean, format_numel_str, get_model_numel, requires_grad, to_torch_dtype
-from opensora.utils.misc import load_jsonl
-from opensora.utils.train_utils import MaskGenerator, update_ema, PrefixLenSampler
-
+from opensora.utils.train_utils import update_ema, PrefixLenSampler
+from opensora.utils.debug_utils import envs
 
 def main(cfg):
     # ======================================================
@@ -106,7 +110,10 @@ def main(cfg):
     # 3. build dataset and dataloader
     # ======================================================
     train_data_cfg = deepcopy(cfg.train_data_cfg)
+    dataset = build_module(train_data_cfg, DATASETS, print_fn = logger.info)  # VideoTextDatasetFromJson
+
     dataset_cls = train_data_cfg.pop("type",None)
+    ''' TODO add other public dataset
     try:
         dataset_cls = {
             None: VideoDataset, # a general dataset
@@ -116,10 +123,9 @@ def main(cfg):
         }[dataset_cls.lower()]
     except KeyError:
         raise NotImplementedError(f"dataset {dataset_cls} is not implemented")
-    
-    dataset = dataset_cls(**train_data_cfg,print_fn = logger.info)
+    '''
     logger.info(f"Dataset `{dataset_cls}` is built, with {len(dataset)} videos.")
-    prepare_dataloader(
+    dataloader = prepare_dataloader(
         dataset,
         batch_size=cfg.batch_size,
         num_workers=cfg.num_workers,
@@ -138,7 +144,7 @@ def main(cfg):
     # 4.1. build model
     text_encoder = build_module(cfg.text_encoder, MODELS, device=device)
     vae = build_module(cfg.vae, MODELS)
-    input_size = (cfg.num_frames, *cfg.image_size)
+    input_size = (dataset.n_sample_frames, *dataset.image_size)
     latent_size = vae.get_latent_size(input_size)
     model = build_module(
         cfg.model,
@@ -241,28 +247,29 @@ def main(cfg):
         clean_prefix = cfg.clean_prefix,
         clean_prefix_set_t0 = cfg.clean_prefix_set_t0,
         dtype = cfg.dtype,
-        progressive_alpha = cfg.progressive_alpha
     ))
     val_examples = build_validate_examples(val_cfgs.examples,val_cfgs.sample_cfgs,print_fn=logger.info)
     if cfg.validate_before_train and coordinator.is_master():
         validation_visualize(model.module,vae,text_encoder,val_examples,val_cfgs,exp_dir,writer,global_step)
 
     # 6.3. training loop
-    running_loss = torch.tensor(0.0,device=get_current_device())
-    loss_accu_step = 0
+
     for epoch in range(start_epoch, cfg.epochs):
         
         dataloader.sampler.set_epoch(epoch)
         dataloader_iter = iter(dataloader)
-        logger.info(f"Beginning epoch {epoch}...")
+        logger.info(f"Beginning epoch {epoch}... num_steps_per_epoch = {num_steps_per_epoch} ")
         with tqdm(
-            enumerate(dataloader_iter, start=start_step),
+            range(start_step, num_steps_per_epoch),
             desc=f"Epoch {epoch}",
             disable=not coordinator.is_master(),
             initial=start_step,
-            total=num_steps_per_epoch,
+            total=num_steps_per_epoch, # we have set `initial=start_step`, so total should NOT be `num_steps_per_epoch-start_step`
         ) as pbar:
-            for step, batch in pbar:
+            
+            running_loss = torch.tensor(0.0,device=get_current_device())
+            loss_accu_step = 0
+            for step, batch in enumerate(dataloader_iter):
                 is_last_step = (step == len(dataloader_iter) - 1)
                 x = batch.pop("video").to(device, dtype)  # [B, C, T, H, W]
                 y = batch.pop("text")
@@ -274,7 +281,7 @@ def main(cfg):
                     model_kwargs = text_encoder.encode(y)
                     
                 bsz = x.shape[0]
-                actual_lenght = batch["actual_lenght"]
+                actual_length = batch["actual_length"]
                 if cfg.clean_prefix:
                     '''e.g.,
                                 [frame prompt    | frame to denoise| padding    ]
@@ -284,8 +291,8 @@ def main(cfg):
                     loss_mask   [0,0,0,...,    0,| 1, 1, ...,    1,| 0,0,0,...,0]
 
                     '''
-                    assert actual_lenght is not None
-                    assert cfg.prefix_min_len < (min_act_L := (actual_lenght.min().item())), "mask sure use condition_th to filter data"
+                    assert actual_length is not None
+                    assert cfg.prefix_min_len < (min_act_L := (actual_length.min().item())), "mask sure use condition_th to filter data"
                     if cfg.fix_ar_size:
                         cfg.reweight_loss_per_frame = False # disable this
                         cfg.reweight_loss_const_len = None
@@ -299,14 +306,14 @@ def main(cfg):
                     if cfg.img_dropout_prob > 0:
                         prefix_drop_mask = torch.rand(size=(bsz,),device=device) < cfg.img_dropout_prob
                         prefix_keep_mask = ~prefix_drop_mask # 1 for clean_prefix, 0 for use <BOV> token
-                        if (n_drop := prefix_keep_mask.sum()) > 0:
+                        if (n_drop := prefix_drop_mask.sum()) > 0:
                             x[prefix_drop_mask,:,0,:,:] = model.module.bov_token[None,:,:,:].repeat(n_drop,1,1,1) # (n_drop, C, H/P, W/P)
                     else:
                         prefix_keep_mask = torch.ones(size=(bsz,), device=device,dtype=torch.bool)
                     
                     loss_mask = torch.zeros_like(x) # (bsz,c,f,h,w)
                     mask_channel = torch.zeros_like(loss_mask[:,0:1,:,:1,:1]) # (bsz,1,f,1,1)
-                    for b, act_L in enumerate(actual_lenght.tolist()):
+                    for b, act_L in enumerate(actual_length.tolist()):
                         # this for-loop is inevitable since each sample has different act_L
                         denoise_len = act_L - v_len if not cfg.fix_ar_size else min(1+cfg.ar_size,act_L)
                         denoise_len_bov = act_L if not cfg.fix_ar_size else min(1+cfg.ar_size,act_L)
@@ -323,10 +330,10 @@ def main(cfg):
                         loss_mask = loss_mask, # (bsz,c,f,h,w)
                         prefix_perturb_t = cfg.prefix_perturb_t,
                     ))
-                elif actual_lenght is not None:
+                elif actual_length is not None:
                     # if clean_prefix is turned off, but some sample in batch maybe shorter than `f`
                     loss_mask = torch.zeros_like(x) # (bsz,c,f,h,w)
-                    for b,act_L in enumerate(actual_lenght.tolist()):
+                    for b,act_L in enumerate(actual_length.tolist()):
                         loss_mask[b,:,:act_L,:,:] = 1
                     model_kwargs.update(dict(
                         loss_mask = loss_mask, # (bsz,c,f,h,w)
@@ -364,12 +371,12 @@ def main(cfg):
                     loss_func = scheduler.training_losses
                     model_kwargs.pop("loss_mask",None)
                 
-                if (alpha:=cfg.progressive_alpha) > 0:
+                if (alpha:=cfg.scheduler.progressive_alpha) > 0:
                     _noise = torch.randn_like(x) # (bsz,c,f,h,w)
                     prev_noise = _noise[:,:,0:1,:,:] # (bsz,c,1,h,w)
                     progressive_noises = [prev_noise]
                     for i in range(1,x.shape[2]):
-                        new_noise = (alpha / math.sqrt(1+alpha**2)) * prev_noise + (1/math.sqrt(1+alpha**2)) * _noise[:,:,1:i+1,:,:]
+                        new_noise = (alpha / math.sqrt(1+alpha**2)) * prev_noise + (1/math.sqrt(1+alpha**2)) * _noise[:,:,i:i+1,:,:]
                         progressive_noises.append(new_noise)
                         prev_noise = new_noise
                     progressive_noises = torch.cat(progressive_noises,dim=2) # (b,c,f,h,w)
@@ -390,11 +397,12 @@ def main(cfg):
                 if is_update:
                     optimizer.step()
                     optimizer.zero_grad()
-                    global_step += 1
-                    pbar.update(1)
 
                     # Update EMA
                     update_ema(ema, model.module, optimizer=optimizer)
+
+                    global_step += 1
+                    pbar.update(1)
                 
                 # Log loss values:
                 if global_step % cfg.log_every_step == 0 and is_update:
@@ -403,7 +411,7 @@ def main(cfg):
                     all_reduce_mean(running_loss) # reduce_mean across all gpus
                     avg_loss = running_loss.item() / loss_accu_step  # avg across log_every_step and n gpus
                     if coordinator.is_master():
-                        pbar.set_postfix({"loss": avg_loss, "step": step, "global_step": global_step})
+                        pbar.set_postfix({"loss": avg_loss, "global_step": global_step})
                         writer.add_scalar("loss", avg_loss, global_step)
                         logger.info(f"global_step={global_step}: interval_avg_loss = {avg_loss}")
                     running_loss.zero_()
@@ -411,7 +419,7 @@ def main(cfg):
 
 
                 # Save checkpoint
-                if cfg.ckpt_every_step > 0 and (global_step + 1) % cfg.ckpt_every_step == 0 and is_update:
+                if cfg.ckpt_every_step > 0 and global_step % cfg.ckpt_every_step == 0 and is_update:
                     save(
                         booster,
                         model,
@@ -420,7 +428,7 @@ def main(cfg):
                         lr_scheduler,
                         epoch,
                         step + 1,
-                        global_step + 1,
+                        global_step,
                         cfg.batch_size,
                         coordinator,
                         exp_dir,
@@ -430,9 +438,12 @@ def main(cfg):
                         f"Saved checkpoint at epoch {epoch} step {step + 1} global_step {global_step + 1} to {exp_dir}"
                     )
                 
-                if (cfg.validation_every_step > 0) and ((global_step+1) % cfg.validation_every_step==0) and is_update:
+                if (cfg.validation_every_step > 0) and (global_step % cfg.validation_every_step==0) and is_update:
                     if coordinator.is_master():
-                        validation_visualize(model,vae,text_encoder,val_examples,val_cfgs,exp_dir,writer,global_step)
+                        validation_visualize(model.module,vae,text_encoder,val_examples,val_cfgs,exp_dir,writer,global_step)
+                        
+                        assert not envs.DEBUG_WITHOUT_LOAD_PRETRAINED # incase we forgot to turn this off
+
                     dist.barrier()
 
         # the continue epochs are not resumed, so we need to reset the sampler start index and start step
@@ -448,8 +459,8 @@ def build_validate_examples(examples_or_path,sample_cfgs,print_fn):
 
     transforms = torchvision.transforms.Compose(
         [
-            video_trainsforms.ToTensorVideo(), # TCHW, normalize to 0~1
-            video_trainsforms.UCFCenterCropVideo(sample_cfgs.height), # TODO if width != height
+            video_transforms.ToTensorVideo(), # TCHW, normalize to 0~1
+            video_transforms.UCFCenterCropVideo(sample_cfgs.height), # TODO if width != height
             torchvision.transforms.Normalize(mean=[0.5,0.5,0.5],std=[0.5,0.5,0.5],inplace=True) # To -1 ~ 1
         ]
     )
@@ -463,7 +474,7 @@ def build_validate_examples(examples_or_path,sample_cfgs,print_fn):
             prompt = prompt + ', ' + common_quality_prompt
         # NOTE negative prompt is not used as in diffusers. Here we use text_encoder.null (i.e., text_encoder.y_embedder)
 
-        first_image_path = example.pop("first_iamge",None)
+        first_image_path = example.pop("first_image",None)
         if first_image_path:
             first_image = torchvision.io.read_image(first_image_path,torchvision.io.ImageReadMode.RGB) # (3,h,w)
             first_image = transforms(first_image.unsqueeze(0)) # (1,3,h,w)
@@ -506,18 +517,18 @@ def validation_visualize(model,vae,text_encoder,val_examples,val_cfgs,exp_dir,wr
     enable_kv_cache = val_cfgs.pop("enable_kv_cache",True)
     kv_cache_dequeue = val_cfgs.pop("kv_cache_dequeue",True)
     sample_func = val_scheduler.sample_with_kv_cache if enable_kv_cache else val_scheduler.sample
-    kv_cache_max_seqlen = max(example.num_frames for example in val_examples)
+    kv_cache_max_seqlen = val_cfgs.kv_cache_max_seqlen
     for idx,example in enumerate(val_examples):
         current_seed = example.seed
         if current_seed == "random":
             current_seed = int(str(datetime.now().timestamp()).split('.')[-1][:4])
-        set_seed(current_seed)
+        set_seed(current_seed) # TODO 要用generator seet seed 才能每个 example 由自己的seed 唯一确定，否则只是设置了起始seed，与example list的顺序有关
 
         if (first_image := example.first_image) is not None:
             first_image = first_image.to(device=device,dtype=dtype) # (1,3,h,w)
-            first_image_latents = vae.encode(first_image.unsqueeze(2)) # vae accept shape (B,C,T,H,W), here B=1,T=1
+            first_img_latents = vae.encode(first_image.unsqueeze(2)) # vae accept shape (B,C,T,H,W), here B=1,T=1
         else:
-            first_image_latents = None
+            first_img_latents = None
         
         input_size = (example.num_frames, example.height, example.width)
         latent_size = vae.get_latent_size(input_size)
@@ -527,7 +538,7 @@ def validation_visualize(model,vae,text_encoder,val_examples,val_cfgs,exp_dir,wr
             z_size=(vae.out_channels, *latent_size),
             window_size=example.auto_regre_chunk_len,
             prompts=[example.prompt],
-            first_image_latents=first_image_latents, # (B,C,1,H,W)
+            first_img_latents=first_img_latents, # (B,C,1,H,W)
             use_predicted_first_img = False,
             txt_guidance_scale = example.txt_guidance_scale,
             img_guidance_scale = example.img_guidance_scale,
@@ -536,9 +547,10 @@ def validation_visualize(model,vae,text_encoder,val_examples,val_cfgs,exp_dir,wr
             clean_prefix_set_t0 = val_cfgs.clean_prefix_set_t0,
             kv_cache_dequeue = kv_cache_dequeue,
             kv_cache_max_seqlen = kv_cache_max_seqlen,
-            progressive_alpha = val_cfgs.progressive_alpha,
             device = device
         ) # (1, C, T, H, W)
+        if enable_kv_cache:
+            model.empty_kv_cache()
         sample = vae.decode(sample.to(dtype=dtype))[0] # (C, T, H, W)
 
         video_name = f"idx{idx}_seed{current_seed}.mp4"
@@ -585,7 +597,6 @@ def reweight_loss_mask(loss_mask,const_len):
 
 def merge_args(cfg,args):
     default_cfgs = dict(
-        progressive_alpha = -1,
         clean_prefix = False,
         clean_prefix_set_t0 = False,
         prefix_perturb_t = -1,

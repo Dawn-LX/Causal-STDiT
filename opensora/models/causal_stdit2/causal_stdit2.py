@@ -125,6 +125,7 @@ class CausalSTDiT2Block(nn.Module):
         # cross_frame_attn = None, # this is deprecated, we re-name it as `spatial_attn_enhance`
     ):
         super().__init__()
+        self.is_causal = is_causal
         self.hidden_size = hidden_size
         self.enable_flashattn = enable_flashattn
         self._enable_sequence_parallelism = enable_sequence_parallelism
@@ -355,7 +356,7 @@ class CausalSTDiT2Block(nn.Module):
         # =======================================================================
         # cross-frame attn spatial branch
         # =======================================================================
-        if self.cross_frame_attn is not None:
+        if self.spatial_attn_enhance is not None:
             x_s = rearrange(x, "B (T S) C -> (B T) S C",T=T,S=S)
             if cached_kv_s is not None: # this can be None when writing 1st frame to cache
                 cached_kv_s: torch.Tensor # B T_p S C; T_p = prev_L
@@ -715,19 +716,21 @@ class CausalSTDiT2(nn.Module):
     
     def empty_kv_cache(self):
         # empty kv-cache to save GPU memory
-        # self.cache_kv.zero_()
-        # self.cache_indicator.zero_()
-        del self.cache_kv
-        del self.cache_indicator
+        
+        if self._kv_cache_registered:
+            # self.cache_kv.zero_()
+            # self.cache_indicator.zero_()
+            del self.cache_kv
+            del self.cache_indicator
 
-        if self.spatial_attn_enhance is not None:
-            # self.spatial_ctx_kv.zero_()
-            del self.spatial_ctx_kv
+            if self.spatial_attn_enhance is not None:
+                # self.spatial_ctx_kv.zero_()
+                del self.spatial_ctx_kv
 
-            if self.spatial_attn_enhance =="first_frame":
-                self._1st_frame_kv_written = False
+                if self.spatial_attn_enhance =="first_frame":
+                    self._1st_frame_kv_written = False
 
-        self._kv_cache_registered = False
+            self._kv_cache_registered = False
 
     @torch.no_grad()
     def write_kv_cache(self,clean_x,y,mask,start_id): 
@@ -743,7 +746,7 @@ class CausalSTDiT2(nn.Module):
         # support old version code
         bsz2 = bsz*self.num_spatial
 
-        self.register_kv_cache(bsz,max_seq_le=max_seq_len,kv_cache_dequeue=kv_cache_dequeue)
+        self.register_kv_cache(bsz,max_seq_len=max_seq_len,kv_cache_dequeue=kv_cache_dequeue)
 
     def register_kv_cache(self,bsz,max_seq_len=None,kv_cache_dequeue=True):
         '''NOTE bsz should take account into cls_free_guidance'''
@@ -821,7 +824,7 @@ class CausalSTDiT2(nn.Module):
         '''
 
         ## for spatial kv
-        B = spatial_kv.shape[2]
+        B = spatial_kv.shape[1]
         if self.spatial_attn_enhance == "first_frame":
             if self._1st_frame_kv_written:
                 # NOTE only write once for SAE mode == "first_frame"
@@ -851,10 +854,10 @@ class CausalSTDiT2(nn.Module):
             
             self.cache_kv = torch.roll(self.cache_kv,-n_dequeue,dims=2)
             self.cache_kv[:,:B,-len_to_write:,:,:] = temporal_kv
-            self.cache_indicator[-len_to_write] += 1
+            self.cache_indicator[-len_to_write:] += 1
             if envs.DEBUG_KV_CACHE:
                 self.cache_ids = torch.roll(self.cache_ids,-n_dequeue,dims=2)
-                cache_ids_to_write = self.cache_ids[-len_to_write]
+                cache_ids_to_write = self.cache_ids[-len_to_write:]
         
         else:
             self.cache_kv[:,:B,cached_len:cached_len+len_to_write,:,:] = temporal_kv
@@ -995,7 +998,7 @@ class CausalSTDiT2(nn.Module):
         cached_len = self.cache_indicator.sum().item()
         assert cached_len > 0 , "call `write_latents_to_cache` first"
         assert cached_kv_t is not None,  "call `write_latents_to_cache` first"
-        assert start_id == cached_len # start_id is used in old-version code, remove this ideally
+        assert start_id == cached_len, f"start_id={start_id},cached_len={cached_len} " # start_id is used in old-version code, remove this ideally
         
         for i, block in enumerate(self.blocks):
             block:CausalSTDiT2Block
@@ -1069,9 +1072,10 @@ class CausalSTDiT2(nn.Module):
         return pos_embed
 
     def get_temporal_pos_embed(self):
+        assert self.patch_size[0] ==1
         pos_embed = get_1d_sincos_pos_embed(
             self.hidden_size,
-            self.input_size[0] // self.patch_size[0],
+            self.temporal_max_len,
             scale=self.time_scale,
         )
         pos_embed = torch.from_numpy(pos_embed).float().unsqueeze(0).requires_grad_(False)
@@ -1156,6 +1160,15 @@ def CausalSTDiT2_XL_2(from_pretrained=None,from_scratch=None, **kwargs):
 @MODELS.register_module("CausalSTDiT2-Tiny") 
 def CausalSTDiT2_Tiny(from_pretrained=None,from_scratch=None, **kwargs):
     model = CausalSTDiT2(depth=2, hidden_size=1152, patch_size=(1, 2, 2), num_heads=16, **kwargs)
+    if from_pretrained is not None:
+        load_checkpoint(model, from_pretrained)
+    
+    return model
+
+# a tiny model for debug
+@MODELS.register_module("CausalSTDiT2-Base") 
+def CausalSTDiT2_Base(from_pretrained=None,from_scratch=None, **kwargs):
+    model = CausalSTDiT2(depth=14, hidden_size=1152, patch_size=(1, 2, 2), num_heads=16, **kwargs)
     if from_pretrained is not None:
         load_checkpoint(model, from_pretrained)
     

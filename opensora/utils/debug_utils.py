@@ -8,7 +8,7 @@ class EnvVars:
 
         self.is_turn_on = lambda env_name : os.getenv(env_name,"False").lower() in ["true","yes","1"]
     
-    def __getattribute__(self, name: str) -> os.Any:
+    def __getattr__(self, name: str):
         
         if "DEBUG" in name.upper():
             if self.disable_all_debug:

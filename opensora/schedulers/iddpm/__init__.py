@@ -14,7 +14,7 @@ def build_progressive_noise(alpha,noise):
         prev_noise = noise[:,:,0:1,:,:] # (bsz,c,1,h,w)
         progressive_noises = [prev_noise]
         for i in range(1,noise.shape[2]):
-            new_noise = (alpha / math.sqrt(1+alpha**2)) * prev_noise + (1/math.sqrt(1+alpha**2)) * noise[:,:,1:i+1,:,:]
+            new_noise = (alpha / math.sqrt(1+alpha**2)) * prev_noise + (1/math.sqrt(1+alpha**2)) * noise[:,:,i:i+1,:,:]
             progressive_noises.append(new_noise)
             prev_noise = new_noise
         progressive_noises = torch.cat(progressive_noises,dim=2) # (b,c,f,h,w)
@@ -205,6 +205,8 @@ def forward_with_cfg(model, x, timestep, y, cfg_scale, cfg_channel=None, **kwarg
 
 @SCHEDULERS.register_module("clean_prefix_iddpm")
 class CleanPrefixIDDPM(IDDPM):
+    MAX_AUTO_REGRESSION_LEN = 128
+
     def training_losses_clean_prefix(self, model, *args, **kwargs):
         return self._training_losses_clean_prefix(self._wrap_model( model), *args, **kwargs)
     
@@ -528,11 +530,10 @@ class CleanPrefixIDDPM(IDDPM):
         auto_regre_steps = len(window_sizes)
         if progress_bar: print(f"window_size: {window_sizes}") 
 
-        if kv_cache_max_seqlen is None:
-            kv_cache_max_seqlen = num_frames
-        if kv_cache_dequeue:
-            # TODO: remove this line, and set kv_cache_dequeue always True and max_cache is directly `kv_cache_max_seqlen`
-            kv_cache_max_seqlen = kv_cache_max_seqlen - window_size
+        
+        if not kv_cache_dequeue:
+            kv_cache_max_seqlen = kv_cache_max_seqlen or num_frames
+            assert kv_cache_max_seqlen >= num_frames
         
         model.pre_allocate_kv_cache(bsz_dup,kv_cache_max_seqlen,kv_cache_dequeue)
 

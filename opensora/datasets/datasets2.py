@@ -33,7 +33,8 @@ def hit_condition(sample:dict,condition_ths:dict):
         
     return True
 
-class VideoDataset(object):
+@DATASETS.register_module()
+class VideoTextDatasetFromJson(object):
     def __init__(
         self,
         video_paths: Union[str, List[str]],
@@ -57,6 +58,7 @@ class VideoDataset(object):
 
         _resolution = aspect_ratio_buckets[0]
         assert len(aspect_ratio_buckets) == 1 and _resolution[0] == _resolution[1], "TODO consider multi-resolution"
+        self.image_size = _resolution
         self.transforms = torchvision.transforms.Compose([
             video_transforms.ToTensorVideo(), # TCHW
             video_transforms.RandomHorizontalFlipVideo(),
@@ -150,6 +152,72 @@ class VideoDataset(object):
         )
 
         return sample
+
+
+@DATASETS.register_module()
+class VideoDatasetForVal(VideoTextDatasetFromJson):
+    def __init__(
+        self,
+        read_video = True,
+        read_first_frame = True,
+        **kwargs
+    ):
+        self.read_video = read_video
+        self.read_first_frame = read_first_frame
+        super().__init__(**kwargs)
+    
+    def __len__(self):
+        assert self.sample_repeats == 1
+        return len(self.annotations)
+    
+    def __getitem__(self,index):
+        anno = self.annotations[index % len(self.annotations)]
+        video_path = anno["video_fn"]
+        anno_frames = anno["length"]
+
+        text = anno["prompt"]
+        sample = {"text":text}
+
+        if self.read_video or self.read_first_frame:
+            vr = decord.VideoReader(video_path) # 
+            # assert anno_frames == len(vr) # ideally this should be `True`, but there maybe some special case ?
+            total_frames = min(anno_frames,len(vr))
+
+            if self.read_first_frame:
+                first_frame: torch.Tensor = vr.get_batch([0]) #  (1, H, W, C)
+                first_frame = first_frame.permute(0, 3, 1, 2) #  (1, C, H, W)
+                first_frame = self.transforms(first_frame) # (1, C, H, W)
+                assert first_frame.shape[0] == 1
+                sample.update({
+                    "first_frame":first_frame.permute(1,0,2,3), # TCHW -> CTHW
+                    "actual_length": 1
+                })
+            
+            if self.read_video:
+                frame_indices = list(range(
+                    0, total_frames, self.sample_interval
+                ))[:self.n_sample_frames]
+            
+                video: torch.Tensor = vr.get_batch(frame_indices) #  (T, H, W, C)
+                video = video.permute(0, 3, 1, 2) #  (T, C, H, W)
+                video = self.transforms(video) # (T, C, H, W)
+                actual_length = len(video)
+                assert actual_length > 0
+        
+                # padding
+                if actual_length < self.n_sample_frames:
+                    # NOTE: zero-padding at the end of video tensor is only suitable for causal temporal attention,
+                    # Otherwise the feature computation is wrong
+                    pad_shape = (self.n_sample_frames - actual_length,) + video.shape[1:]
+                    video = torch.cat([video,torch.zeros(pad_shape)],dim=0)
+
+                sample.update({
+                    "video":video.permute(1,0,2,3), # TCHW -> CTHW
+                    "actual_length": actual_length
+                })
+
+        return sample
+    
 
 def dataloader_demo():
     from torch.utils.data import DataLoader

@@ -21,6 +21,11 @@ def load_jsonl(path) -> list:
             data.append(d)
     return data
 
+def load_json(path):
+    with open(path,'r') as file:
+        x = json.load(file)
+    return x
+
 def print_rank(var_name, var_value, rank=0):
     if dist.get_rank() == rank:
         print(f"[Rank {rank}] {var_name}: {var_value}")

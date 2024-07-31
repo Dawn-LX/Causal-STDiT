@@ -5,7 +5,10 @@ from typing import Iterator, List, Optional
 
 import torch
 import torch.distributed as dist
-from pandarallel import pandarallel
+try:
+    from pandarallel import pandarallel
+except:
+    print("pandarallel is not installed")
 from torch.utils.data import DistributedSampler
 
 from .bucket import Bucket

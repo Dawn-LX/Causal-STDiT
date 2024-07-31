@@ -518,7 +518,7 @@ class CausalSTDiT(nn.Module):
         # NOTE self.num_temporal should only be used for training, for auto-regre inference, num_temporal changes at each auto-regre step
         # Thus, we decouple num_temporal & num_spatial
         # self.num_spatial = num_patches // self.num_temporal
-        self.num_saptial = (input_size[1] // patch_size[1]) * (input_size[2] // patch_size[2])
+        self.num_spatial = (input_size[1] // patch_size[1]) * (input_size[2] // patch_size[2])
 
         self.num_heads = num_heads
         self.dtype = dtype
@@ -655,7 +655,7 @@ class CausalSTDiT(nn.Module):
                 x.shape == (B, C, T, H, W) == (3,4,16,32,32), input_size==(16,32,32); path_size == (1,2,2)
                 num_patches = (16/1) * (32/2) * (32/2) == 4096
                 num_temporal == 16/1 == 16
-                num_saptial == (32/2)*(32/2) = 256
+                num_spatial == (32/2)*(32/2) = 256
             '''
             self._check_input_shape(x)
             num_temporal = self.num_temporal
@@ -665,7 +665,7 @@ class CausalSTDiT(nn.Module):
                 x.shape == (B, C, T, H, W) == (3,4,17,32,32), input_size==(17,32,32); path_size == (1,2,2)
                 num_patches = (17/1) * (32/2) * (32/2) = 4352
                 num_temporal == 17/1 == 17
-                num_saptial == (32/2)*(32/2) = 256
+                num_spatial == (32/2)*(32/2) = 256
             '''
             num_temporal = x.shape[2]
             assert self.patch_size[0] == 1, "TODO, consdier temporal patchify for auto-regre infer"
@@ -742,7 +742,7 @@ class CausalSTDiT(nn.Module):
 
     def pre_allocate_kv_cache(self,bsz,max_seq_len, kv_cache_dequeue=False):
         '''NOTE bsz should take account into cls_free_guidance'''
-        bsz = bsz * self.num_saptial # b*h*w
+        bsz = bsz * self.num_spatial # b*h*w
         device = self.pos_embed_temporal.device
         dtype = self.dtype
 
@@ -792,7 +792,7 @@ class CausalSTDiT(nn.Module):
 
         # embedding
         x = self.x_embedder(x) # (B, N, C)
-        x = rearrange(x, "B (T S) C -> B T S C",T=num_temporal,S = self.num_saptial)
+        x = rearrange(x, "B (T S) C -> B T S C",T=num_temporal,S = self.num_spatial)
         x = x + self.pos_embed
         x = rearrange(x, "B T S C -> B (T S) C")
 
@@ -899,7 +899,7 @@ class CausalSTDiT(nn.Module):
         x = x.to(torch.float32)
         return x
     
-    def unpatchify(self, x):
+    def unpatchify(self, x, input_size):
         """
         Args:
             x (torch.Tensor): of shape [B, N, C]
@@ -908,7 +908,9 @@ class CausalSTDiT(nn.Module):
             x (torch.Tensor): of shape [B, C_out, T, H, W]
         """
 
-        N_t, N_h, N_w = [self.input_size[i] // self.patch_size[i] for i in range(3)]
+        N_t, N_h, N_w = [input_size[i] // self.patch_size[i] for i in range(3)]
+        if not self.training:
+            assert self.patch_size[0] == 1, "TODO: consider temporal patchify for auto-regression"
         T_p, H_p, W_p = self.patch_size
         x = rearrange(
             x,
@@ -945,9 +947,10 @@ class CausalSTDiT(nn.Module):
         return pos_embed
 
     def get_temporal_pos_embed(self):
+        assert self.patch_size[0] ==1
         pos_embed = get_1d_sincos_pos_embed(
             self.hidden_size,
-            self.input_size[0] // self.patch_size[0],
+            self.temporal_max_len,
             scale=self.time_scale,
         )
         pos_embed = torch.from_numpy(pos_embed).float().unsqueeze(0).requires_grad_(False)

@@ -4,6 +4,7 @@ import logging
 import operator
 import os
 from typing import Tuple
+import datetime
 
 import torch
 import torch.distributed as dist
@@ -244,13 +245,14 @@ def create_logger(logging_dir):
     Create a logger that writes to a log file and stdout.
     """
     if dist.get_rank() == 0:  # real logger
+        now = datetime.datetime.now().strftime("%Y-%m-%dT%H-%M-%S")
         logging.basicConfig(
             level=logging.INFO,
             format="[\033[34m%(asctime)s\033[0m] %(message)s",
             datefmt="%Y-%m-%d %H:%M:%S",
             handlers=[
                 logging.StreamHandler(),
-                logging.FileHandler(f"{logging_dir}/log.txt"),
+                logging.FileHandler(f"{logging_dir}/{now}.log"),
             ],
         )
         logger = logging.getLogger(__name__)
