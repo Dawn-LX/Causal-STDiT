@@ -13,6 +13,7 @@ NUM_GPUS=$(echo $CUDA_VISIBLE_DEVICES | awk -F',' '{print NF}')
 
 export IS_DEBUG=0
 export DEBUG_WITHOUT_LOAD_PRETRAINED=0
+export TOKENIZERS_PARALLELISM=false
 torchrun \
     --nnodes=1 \
     --master-port=$MASTER_PORT \

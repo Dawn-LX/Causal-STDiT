@@ -152,6 +152,7 @@ class CausalSTDiT2Block(nn.Module):
             num_heads=num_heads,
             qkv_bias=True,
             enable_flash_attn=enable_flashattn,
+            is_causal=False,
         )
         self.cross_attn = cross_attn_cls(hidden_size, num_heads)
         self.norm2 = get_layernorm(hidden_size, eps=1e-6, affine=False, use_kernel=enable_layernorm_kernel)
@@ -166,7 +167,8 @@ class CausalSTDiT2Block(nn.Module):
             hidden_size,
             num_heads=num_heads,
             qkv_bias=True,
-            enable_flash_attn=self.enable_flashattn
+            enable_flash_attn=self.enable_flashattn,
+            is_causal = True
         )
 
         if self.spatial_attn_enhance is not None:
@@ -174,14 +176,16 @@ class CausalSTDiT2Block(nn.Module):
                 hidden_size,
                 num_heads = num_heads,
                 qkv_bias=True,
-                enable_flash_attn=self.enable_flashattn
+                enable_flash_attn=self.enable_flashattn,
+                is_causal = False
             )
         if t_win_size > 0:
             self.attn_temp_window = temp_attn_cls(
                 hidden_size,
                 num_heads = num_heads,
                 qkv_bias=True,
-                enable_flash_attn=self.enable_flashattn
+                enable_flash_attn=self.enable_flashattn,
+                is_causal = True
             )
         
         self.temp_extra_in_channels = temp_extra_in_channels
@@ -219,6 +223,7 @@ class CausalSTDiT2Block(nn.Module):
             # for auto-regressive inference, d_t changes at each auto-regre step
             T = N // S # overwrite T
         
+        # print(t.shape,self.scale_shift_table.shape)
         if t.ndim == 2:
             shift_msa, scale_msa, gate_msa, shift_mlp, scale_mlp, gate_mlp = (
                 self.scale_shift_table[None] + t.reshape(B, 6, -1) # (1, 6, C) + (B, 6, C) --> (B, 6, C)
@@ -228,6 +233,7 @@ class CausalSTDiT2Block(nn.Module):
             assert t.ndim == 3
             t=t[:,:,None,:].repeat(1,1,S,1) # (b,f,s,6*c)
             t= rearrange(t, 'b f s c -> b (f s) c', b=B,f=T)
+            t=t.reshape(B,N,6,C)
 
             scale_shift_by_t = self.scale_shift_table[None,None,:,:] + t # (B, N, 6, C)
             scale_shift_by_t = scale_shift_by_t.chunk(6, dim=2) # (B,N, 1, C)
@@ -420,7 +426,7 @@ class CausalSTDiT2Block(nn.Module):
             x = x + self.cross_attn(x, y, mask)
         
         # mlp
-        x = x + self.drop_path(gate_mlp + self.mlp(t2i_modulate(self.norm2(x),shift_mlp,scale_mlp)))
+        x = x + self.drop_path(gate_mlp * self.mlp(t2i_modulate(self.norm2(x),shift_mlp,scale_mlp)))
 
         if return_kv:
             return (
@@ -1165,7 +1171,7 @@ def CausalSTDiT2_Tiny(from_pretrained=None,from_scratch=None, **kwargs):
     
     return model
 
-# a tiny model for debug
+# Base model
 @MODELS.register_module("CausalSTDiT2-Base") 
 def CausalSTDiT2_Base(from_pretrained=None,from_scratch=None, **kwargs):
     model = CausalSTDiT2(depth=14, hidden_size=1152, patch_size=(1, 2, 2), num_heads=16, **kwargs)

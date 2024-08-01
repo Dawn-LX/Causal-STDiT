@@ -360,7 +360,7 @@ def main(cfg):
                         t_input[prefix_drop_mask,:1] = 0 # for <bov> token
                     else:
                         t_input[:,:v_len] = 0
-                
+                    model_kwargs.update(dict(t_input=t_input))
 
                 if loss_mask is not None:
                     if cfg.scheduler.type == "clean_prefix_iddpm":
@@ -549,8 +549,6 @@ def validation_visualize(model,vae,text_encoder,val_examples,val_cfgs,exp_dir,wr
             kv_cache_max_seqlen = kv_cache_max_seqlen,
             device = device
         ) # (1, C, T, H, W)
-        if enable_kv_cache:
-            model.empty_kv_cache()
         sample = vae.decode(sample.to(dtype=dtype))[0] # (C, T, H, W)
 
         video_name = f"idx{idx}_seed{current_seed}.mp4"
@@ -572,8 +570,8 @@ def validation_visualize(model,vae,text_encoder,val_examples,val_cfgs,exp_dir,wr
                 walltime=None
             )
 
-    if enable_kv_cache:
-        model.empty_kv_cache()
+    # if enable_kv_cache:
+    #     model.empty_kv_cache()
     
     gc.collect()
     torch.cuda.empty_cache()
