@@ -62,7 +62,7 @@ class VideoTextDatasetFromJson(object):
         self.transforms = torchvision.transforms.Compose([
             video_transforms.ToTensorVideo(), # TCHW
             video_transforms.RandomHorizontalFlipVideo(),
-            video_transforms.ResizeCrop(_resolution[0]), # TODO define a ResizeCenterCrop()
+            video_transforms.ResizeCenterCropVideo(_resolution[0]), # TODO define a ResizeCenterCrop()
             torchvision.transforms.Normalize(mean=[0.5,0.5,0.5],std=[0.5,0.5,0.5],inplace=True) # to -1 ~ 1
         ])
 

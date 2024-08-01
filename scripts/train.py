@@ -248,7 +248,9 @@ def main(cfg):
         clean_prefix_set_t0 = cfg.clean_prefix_set_t0,
         dtype = cfg.dtype,
     ))
-    val_examples = build_validate_examples(val_cfgs.examples,val_cfgs.sample_cfgs,print_fn=logger.info)
+    val_examples = val_cfgs.get("examples",None)
+    val_examples = val_examples if val_examples is not None else val_cfgs.examples_json 
+    val_examples = build_validate_examples(val_examples,val_cfgs.sample_cfgs,print_fn=logger.info)
     if cfg.validate_before_train and coordinator.is_master():
         validation_visualize(model.module,vae,text_encoder,val_examples,val_cfgs,exp_dir,writer,global_step)
 
@@ -460,7 +462,7 @@ def build_validate_examples(examples_or_path,sample_cfgs,print_fn):
     transforms = torchvision.transforms.Compose(
         [
             video_transforms.ToTensorVideo(), # TCHW, normalize to 0~1
-            video_transforms.UCFCenterCropVideo(sample_cfgs.height), # TODO if width != height
+            video_transforms.ResizeCenterCropVideo(sample_cfgs.height), #
             torchvision.transforms.Normalize(mean=[0.5,0.5,0.5],std=[0.5,0.5,0.5],inplace=True) # To -1 ~ 1
         ]
     )

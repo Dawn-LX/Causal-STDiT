@@ -17,7 +17,7 @@
 
 import numbers
 import random
-
+import math
 import numpy as np
 import torch
 
@@ -55,6 +55,16 @@ def resize_scale(clip, target_size, interpolation_mode):
     scale_ = target_size[0] / min(H, W)
     return torch.nn.functional.interpolate(clip, scale_factor=scale_, mode=interpolation_mode, align_corners=False)
 
+def resize_scale_fit_shorter(clip, target_size, interpolation_mode):
+    if len(target_size) != 2:
+        raise ValueError(f"target size should be tuple (height, width), instead got {target_size}")
+    H, W = clip.size(-2), clip.size(-1)
+    th, tw = target_size
+
+    scale_ = max(th/H, tw/W)
+    target_size_keep_ratio = (math.ceil(H*scale_), math.ceil(W*scale_))
+
+    return torch.nn.functional.interpolate(clip, size=target_size_keep_ratio, mode=interpolation_mode, align_corners=False)
 
 def resized_crop(clip, i, j, h, w, size, interpolation_mode="bilinear"):
     """
@@ -316,6 +326,30 @@ class UCFCenterCropVideo:
 
     def __repr__(self) -> str:
         return f"{self.__class__.__name__}(size={self.size}, interpolation_mode={self.interpolation_mode}"
+
+class ResizeCenterCropVideo(UCFCenterCropVideo):
+    '''
+    First scale to the specified size in equal proportion to the short edge,
+    then center cropping
+
+    NOTE It is similar to `UCFCenterCropVideo`, 
+    but `UCFCenterCropVideo` use `scale = target_h / min(h,w)`
+    here we use `scale = max(target_h/h, target_w/w)`
+    '''
+    def __call__(self, clip):
+        """
+        Args:
+            clip (torch.tensor): Video clip to be cropped. Size is (T, C, H, W)
+        Returns:
+            torch.tensor: scale resized / center cropped video clip.
+                size is (T, C, crop_size, crop_size)
+        """
+        clip_resize = resize_scale_fit_shorter(clip=clip, target_size=self.size, interpolation_mode=self.interpolation_mode)
+        clip_center_crop = center_crop(clip_resize, self.size)
+        return clip_center_crop
+
+    def __repr__(self) -> str:
+        return f"{self.__class__.__name__}(size={self.size}, interpolation_mode={self.interpolation_mode}" 
 
 
 class KineticsRandomCropResizeVideo:

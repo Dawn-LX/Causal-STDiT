@@ -467,13 +467,15 @@ class CausalSTDiT2(nn.Module):
         spatial_attn_enhance = None,
         cross_frame_attn:str = None,
         t_win_size : int = 0,
-        is_causal: bool = True
+        is_causal: bool = True,
+        with_cross_attn = True
     ):
         super().__init__()
         if (cross_frame_attn is not None) and (spatial_attn_enhance is None):
             # support old-version code
             spatial_attn_enhance = cross_frame_attn.replace("prev_prefix_","prev_frames_")
 
+        self.with_cross_attn = with_cross_attn # turn this off if w/o text prompt
         self.is_causal = is_causal
         self.pred_sigma = pred_sigma
         self.in_channels = in_channels
