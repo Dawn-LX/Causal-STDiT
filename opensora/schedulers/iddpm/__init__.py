@@ -367,8 +367,13 @@ class CleanPrefixIDDPM(IDDPM):
             assert txt_guidance_scale > 1.0, "turn on txt guidance when using img guidance"
         
         # 1. build txt condition
-        model_kwargs = text_encoder.encode(prompts)
-        y_null = text_encoder.null(bsz) if cls_free_guidance else None
+        if text_encoder is not None:
+            model_kwargs = text_encoder.encode(prompts)
+            y_null = text_encoder.null(bsz) if cls_free_guidance else None
+        else:
+            assert cls_free_guidance is None
+            model_kwargs = dict()
+        
         if cls_free_guidance == "text":
             model_kwargs["y"] = torch.cat([y_null,model_kwargs["y"]], dim=0)
         elif cls_free_guidance == "both":
@@ -503,8 +508,13 @@ class CleanPrefixIDDPM(IDDPM):
         '''
         
         # 1. build txt condition
-        model_kwargs = text_encoder.encode(prompts)
-        y_null = text_encoder.null(bsz) if cls_free_guidance else None
+        if text_encoder is not None:
+            model_kwargs = text_encoder.encode(prompts)
+            y_null = text_encoder.null(bsz) if cls_free_guidance else None
+        else:
+            assert cls_free_guidance is None, f"txt_guidance_scale={txt_guidance_scale}"
+            model_kwargs = {"y":None,"mask":None}
+        
         if cls_free_guidance == "text":
             model_kwargs["y"] = torch.cat([y_null,model_kwargs["y"]], dim=0)
             bsz_dup = bsz*2

@@ -60,7 +60,7 @@ def reparameter(ckpt, name=None, model=None):
     if "pos_embed" in ckpt:
         del ckpt["pos_embed"]
     # different text length
-    if "y_embedder.y_embedding" in ckpt:
+    if ("y_embedder.y_embedding" in ckpt) and (model.y_embedder is not None): # support unconditional video gen
         if ckpt["y_embedder.y_embedding"].shape[0] < model.y_embedder.y_embedding.shape[0]:
             print(
                 f"Extend y_embedding from {ckpt['y_embedder.y_embedding'].shape[0]} to {model.y_embedder.y_embedding.shape[0]}"

@@ -101,8 +101,8 @@ grad_clip = 1.0
 
 epochs = 20
 log_every_step = 5
-ckpt_every_step = 20
-validation_every_step = 20
+ckpt_every_step = 500
+validation_every_step = 100
 validate_before_train = True
 
 validation_configs = dict(

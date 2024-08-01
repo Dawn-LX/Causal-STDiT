@@ -122,9 +122,10 @@ class CausalSTDiT2Block(nn.Module):
         spatial_attn_enhance = None,
         t_win_size : int = 0,
         is_causal: bool = True, # this is deprecated, we always set is_causal=True
-        # cross_frame_attn = None, # this is deprecated, we re-name it as `spatial_attn_enhance`
+        with_cross_attn = True,
     ):
         super().__init__()
+        self.with_cross_attn = with_cross_attn
         self.is_causal = is_causal
         self.hidden_size = hidden_size
         self.enable_flashattn = enable_flashattn
@@ -154,7 +155,8 @@ class CausalSTDiT2Block(nn.Module):
             enable_flash_attn=enable_flashattn,
             is_causal=False,
         )
-        self.cross_attn = cross_attn_cls(hidden_size, num_heads)
+        if self.with_cross_attn:
+            self.cross_attn = cross_attn_cls(hidden_size, num_heads)
         self.norm2 = get_layernorm(hidden_size, eps=1e-6, affine=False, use_kernel=enable_layernorm_kernel)
         self.mlp = Mlp(
             in_features=hidden_size, hidden_features=int(hidden_size * mlp_ratio), act_layer=approx_gelu, drop=0
@@ -313,7 +315,8 @@ class CausalSTDiT2Block(nn.Module):
             pass
         
         # cross attn
-        x = x + self.cross_attn(x, y, mask)
+        if self.with_cross_attn:
+            x = x + self.cross_attn(x, y, mask)
 
         # mlp
         x_m = t2i_modulate(self.norm2(x), shift_mlp, scale_mlp)
@@ -419,11 +422,12 @@ class CausalSTDiT2Block(nn.Module):
             return None,spatial_kv,temporal_kv
 
         ######### cross-attn
-        if self._enable_sequence_parallelism:
-            # avoid using seq parallel
-            x = x + MultiHeadCrossAttention.forward(self.cross_attn,x,y,mask)
-        else:
-            x = x + self.cross_attn(x, y, mask)
+        if self.with_cross_attn:
+            if self._enable_sequence_parallelism:
+                # avoid using seq parallel
+                x = x + MultiHeadCrossAttention.forward(self.cross_attn,x,y,mask)
+            else:
+                x = x + self.cross_attn(x, y, mask)
         
         # mlp
         x = x + self.drop_path(gate_mlp * self.mlp(t2i_modulate(self.norm2(x),shift_mlp,scale_mlp)))
@@ -468,14 +472,12 @@ class CausalSTDiT2(nn.Module):
         cross_frame_attn:str = None,
         t_win_size : int = 0,
         is_causal: bool = True,
-        with_cross_attn = True
     ):
         super().__init__()
         if (cross_frame_attn is not None) and (spatial_attn_enhance is None):
             # support old-version code
             spatial_attn_enhance = cross_frame_attn.replace("prev_prefix_","prev_frames_")
 
-        self.with_cross_attn = with_cross_attn # turn this off if w/o text prompt
         self.is_causal = is_causal
         self.pred_sigma = pred_sigma
         self.in_channels = in_channels
@@ -513,13 +515,16 @@ class CausalSTDiT2(nn.Module):
         self.x_embedder = PatchEmbed3D(patch_size, in_channels, hidden_size)
         self.t_embedder = TimestepEmbedderExpand(hidden_size)
         self.t_block = nn.Sequential(nn.SiLU(), nn.Linear(hidden_size, 6 * hidden_size, bias=True))
-        self.y_embedder = CaptionEmbedder(
-            in_channels=caption_channels,
-            hidden_size=hidden_size,
-            uncond_prob=class_dropout_prob,
-            act_layer=approx_gelu,
-            token_num=model_max_length,
-        )
+        if caption_channels > 0:
+            self.y_embedder = CaptionEmbedder(
+                in_channels=caption_channels,
+                hidden_size=hidden_size,
+                uncond_prob=class_dropout_prob,
+                act_layer=approx_gelu,
+                token_num=model_max_length,
+            )
+        else:
+            self.y_embedder = None
 
         drop_path = [x.item() for x in torch.linspace(0, drop_path, depth)]
         self.blocks = nn.ModuleList(
@@ -537,7 +542,8 @@ class CausalSTDiT2(nn.Module):
                     temp_extra_in_channels = temp_extra_in_channels if (i==0 or temp_extra_in_all_block) else 0,
                     spatial_attn_enhance=spatial_attn_enhance,
                     t_win_size = t_win_size,
-                    is_causal= is_causal
+                    is_causal= is_causal,
+                    with_cross_attn =  caption_channels > 0
                 )
                 for i in range(self.depth)
             ]
@@ -653,7 +659,7 @@ class CausalSTDiT2(nn.Module):
 
         x = x.to(dtype)
         timestep = timestep.to(dtype)
-        y = y.to(dtype)
+        if y is not None: y = y.to(dtype)
         if mask_channel is not None: mask_channel = mask_channel.to(dtype)
 
 
@@ -666,19 +672,7 @@ class CausalSTDiT2(nn.Module):
 
         t = self.t_embedder(timestep, dtype=x.dtype)  # [B, C] or [B, T, C]
         t_mlp = self.t_block(t)  # [B, C*6]
-
-        y = self.y_embedder(y, self.training)  # [B, 1, N_token, C]
-
-        if mask is not None:
-            if mask.shape[0] != y.shape[0]: # this happens when using cls_free_guidance
-                mask = mask.repeat(y.shape[0] // mask.shape[0], 1)
-
-            mask = mask.squeeze(1).squeeze(1)
-            y = y.squeeze(1).masked_select(mask.unsqueeze(-1) != 0).view(1, -1, x.shape[-1])
-            y_lens = mask.sum(dim=1).tolist()
-        else:
-            y_lens = [y.shape[2]] * y.shape[0]
-            y = y.squeeze(1).view(1, -1, x.shape[-1])  # (B, 1, N_token, C) --> (1, B*N_token, C)
+        y,y_lens = self.process_text_embeddings_with_mask(y,mask)
 
         # shard over the sequence dim if sp is enabled
         if self.enable_sequence_parallelism:
@@ -877,7 +871,38 @@ class CausalSTDiT2(nn.Module):
         if envs.DEBUG_KV_CACHE:
             print(f"cache_ids_to_write: {cache_ids_to_write}")
             print(f"after write_kv_cache, cache_indicator={self.cache_indicator}")
-            
+        '''
+        training:
+
+        [condition frame] [noisy frames (to denoise)]
+        [0,1,2,...,16]    [17,18,...,33]
+        [0,1,...,16,17,...,33] []
+
+        random sample the above cases
+
+        inference:
+        
+        '''
+    
+    def process_text_embeddings_with_mask(self,y,mask):
+        if self.y_embedder is None:
+            # here y can be None
+            return None,None
+        
+        assert y is not None
+        y = self.y_embedder(y, self.training)  # [B, 1, N_token, C]
+        if mask is not None:
+            if mask.shape[0] != y.shape[0]: # this happens when using cls_free_guidance
+                mask = mask.repeat(y.shape[0] // mask.shape[0], 1)
+
+            mask = mask.squeeze(1).squeeze(1)
+            y = y.squeeze(1).masked_select(mask.unsqueeze(-1) != 0).view(1, -1, x.shape[-1])
+            y_lens = mask.sum(dim=1).tolist()
+        else:
+            y_lens = [y.shape[2]] * y.shape[0]
+            y = y.squeeze(1).view(1, -1, x.shape[-1])  # (B, 1, N_token, C) --> (1, B*N_token, C)
+        
+        return y,y_lens
 
     @torch.no_grad()
     def write_latents_to_cache(self,clean_x,y,mask):
@@ -891,7 +916,7 @@ class CausalSTDiT2(nn.Module):
         dtype = self.x_embedder.proj.weight.dtype
         
         x = clean_x.to(dtype)
-        y = y.to(dtype)
+        if y is not None: y = y.to(dtype)
         num_temporal = x.shape[2]
 
         mask_channel = torch.ones_like(x[:,:1,:,:1,:1]) # (B, 1, T, 1, 1)
@@ -906,19 +931,7 @@ class CausalSTDiT2(nn.Module):
 
         t = self.t_embedder(timestep, dtype=x.dtype)  # [B, C]
         t_mlp = self.t_block(t)  # [B, C*6]
-
-        y = self.y_embedder(y, self.training)  # [B, 1, N_token, C]
-
-        if mask is not None:
-            if mask.shape[0] != y.shape[0]: # this happens when using cls_free_guidance
-                mask = mask.repeat(y.shape[0] // mask.shape[0], 1)
-
-            mask = mask.squeeze(1).squeeze(1)
-            y = y.squeeze(1).masked_select(mask.unsqueeze(-1) != 0).view(1, -1, x.shape[-1])
-            y_lens = mask.sum(dim=1).tolist()
-        else:
-            y_lens = [y.shape[2]] * y.shape[0]
-            y = y.squeeze(1).view(1, -1, x.shape[-1])  # (B, 1, N_token, C) --> (1, B*N_token, C)
+        y,y_lens = self.process_text_embeddings_with_mask(y,mask)
 
 
         # blocks
@@ -972,7 +985,7 @@ class CausalSTDiT2(nn.Module):
 
         x = x.to(dtype)
         timestep = timestep.to(dtype)
-        y = y.to(dtype)
+        if y is not None: y = y.to(dtype)
         mask_channel = torch.zeros_like(x[:,:1,:,:1,:1]) # (B, 1, T, 1, 1)
 
 
@@ -985,18 +998,7 @@ class CausalSTDiT2(nn.Module):
 
         t = self.t_embedder(timestep, dtype=x.dtype)  # [B, C] or [B, T, C]
         t_mlp = self.t_block(t)  # [B, C*6]
-        y = self.y_embedder(y, self.training)  # [B, 1, N_token, C]
-
-        if mask is not None:
-            if mask.shape[0] != y.shape[0]: # this happens when using cls_free_guidance
-                mask = mask.repeat(y.shape[0] // mask.shape[0], 1)
-
-            mask = mask.squeeze(1).squeeze(1)
-            y = y.squeeze(1).masked_select(mask.unsqueeze(-1) != 0).view(1, -1, x.shape[-1])
-            y_lens = mask.sum(dim=1).tolist()
-        else:
-            y_lens = [y.shape[2]] * y.shape[0]
-            y = y.squeeze(1).view(1, -1, x.shape[-1])  # (B, 1, N_token, C) --> (1, B*N_token, C)
+        y,y_lens = self.process_text_embeddings_with_mask(y,mask)
 
 
         # blocks
@@ -1136,13 +1138,15 @@ class CausalSTDiT2(nn.Module):
         nn.init.normal_(self.t_block[1].weight, std=0.02)
 
         # Initialize caption embedding MLP:
-        nn.init.normal_(self.y_embedder.y_proj.fc1.weight, std=0.02)
-        nn.init.normal_(self.y_embedder.y_proj.fc2.weight, std=0.02)
+        if self.y_embedder is not None:
+            nn.init.normal_(self.y_embedder.y_proj.fc1.weight, std=0.02)
+            nn.init.normal_(self.y_embedder.y_proj.fc2.weight, std=0.02)
 
         # Zero-out adaLN modulation layers in PixArt blocks:
         for block in self.blocks:
-            nn.init.constant_(block.cross_attn.proj.weight, 0)
-            nn.init.constant_(block.cross_attn.proj.bias, 0)
+            if block.with_cross_attn:
+                nn.init.constant_(block.cross_attn.proj.weight, 0)
+                nn.init.constant_(block.cross_attn.proj.bias, 0)
 
         # Zero-out output layers:
         nn.init.constant_(self.final_layer.linear.weight, 0)

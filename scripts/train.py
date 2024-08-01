@@ -142,7 +142,14 @@ def main(cfg):
     # 4. build model
     # ======================================================
     # 4.1. build model
-    text_encoder = build_module(cfg.text_encoder, MODELS, device=device)
+    text_encoder = build_module(cfg.get("text_encoder", None), MODELS, device=device)
+    if text_encoder is not None:
+        text_encoder_output_dim = text_encoder.output_dim
+        text_encoder_model_max_length = text_encoder.model_max_length
+    else:
+        text_encoder_output_dim = cfg.model.caption_channels
+        text_encoder_model_max_length = 0
+    
     vae = build_module(cfg.vae, MODELS)
     input_size = (dataset.n_sample_frames, *dataset.image_size)
     latent_size = vae.get_latent_size(input_size)
@@ -151,10 +158,11 @@ def main(cfg):
         MODELS,
         input_size=latent_size,
         in_channels=vae.out_channels,
-        caption_channels=text_encoder.output_dim,
-        model_max_length=text_encoder.model_max_length
+        caption_channels=text_encoder_output_dim,
+        model_max_length=text_encoder_model_max_length
     )
-    text_encoder.y_embedder = model.y_embedder  # hack for classifier-free guidance
+    if text_encoder is not None:
+        text_encoder.y_embedder = model.y_embedder  # hack for classifier-free guidance
 
     model_numel, model_numel_trainable = get_model_numel(model)
     logger.info(
@@ -280,7 +288,10 @@ def main(cfg):
                     # Prepare visual inputs
                     x = vae.encode(x)  # [B, C, T, H/P, W/P]
                     # Prepare text inputs
-                    model_kwargs = text_encoder.encode(y)
+                    if text_encoder is not None:
+                        model_kwargs = text_encoder.encode(y) # {y,y_mask}
+                    else:
+                        model_kwargs = {"y":None,"mask":None}
                     
                 bsz = x.shape[0]
                 actual_length = batch["actual_length"]
@@ -600,8 +611,8 @@ def merge_args(cfg,args):
         clean_prefix = False,
         clean_prefix_set_t0 = False,
         prefix_perturb_t = -1,
-        txt_dropout_proib = 0,
-        img_dropout_proib = 0,
+        txt_dropout_prob = 0,
+        img_dropout_prob = 0,
         enable_kv_cache = True,
 
         ### random sample prefix_len = 1 ~ max_L - 1

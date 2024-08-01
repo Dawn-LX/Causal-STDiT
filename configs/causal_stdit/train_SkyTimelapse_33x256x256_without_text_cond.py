@@ -22,8 +22,6 @@ train_data_cfg = dict(
 ################ exp configs for causal-stdit
 clean_prefix = True
 clean_prefix_set_t0 = True
-txt_dropout_prob = 0.1
-img_dropout_prob = 0
 progressive_alpha = -1
 prefix_perturb_t = 100 # max diffusion step is 1000
 
@@ -41,20 +39,20 @@ _exp_tag = "{}x{}x{}ArSize{}".format(
     _image_size[0],_image_size[1],
     ar_size
 )
-outputs = f"/data/CausalSTDiT_working_dir/CausalSTDiT2Base_{_exp_tag}_timelapse"
+outputs = f"/data/CausalSTDiT_working_dir/CausalSTDiT2-XL2_{_exp_tag}pp3_timelapse"
 
 
 #### model configs
 resume_from_ckpt = None
 model = dict(
-    type="CausalSTDiT2-Base",
+    type="CausalSTDiT2-XL/2",
     space_scale=1.0,
     time_scale=1.0,
     from_pretrained=_CKPT_OpenSORA16x512x512, # https://huggingface.co/hpcai-tech/Open-Sora/blob/main/OpenSora-v1-HQ-16x256x256.pth
     freeze = None,
     from_scratch = None,
 
-    class_dropout_prob = txt_dropout_prob,
+    caption_channels = 0,
     temp_extra_in_channels = 1,
     temp_extra_in_all_block = False,
     temporal_max_len = 64,
@@ -62,7 +60,7 @@ model = dict(
     enable_flashattn = True,
     enable_layernorm_kernel = False,
     enable_sequence_parallelism = False,
-    cross_frame_attn = "prev_prefix_1",
+    cross_frame_attn = "prev_prefix_3",
     t_win_size = 0,
 )
 
@@ -70,12 +68,7 @@ vae = dict(
     type="VideoAutoencoderKL",
     from_pretrained=_CKPT_SD_VAE_FT_EMA,
 )
-text_encoder = dict(
-    type="t5",
-    from_pretrained=_CKPT_T5_V_1_1_XXL,
-    model_max_length=120,
-    shardformer=False, # This is for model parallelism
-)
+text_encoder = None
 scheduler = dict(
     type="clean_prefix_iddpm",
     timestep_respacing="",
@@ -90,8 +83,8 @@ sp_size = 1
 num_workers = 4
 sampler_seed = 2142
 
-batch_size = 1
-accumulation_steps = 4
+batch_size = 2
+accumulation_steps = 2
 lr = 2e-5
 grad_clip = 1.0
 
@@ -117,7 +110,7 @@ validation_configs = dict(
         height = 256,
         num_frames = 49,
         auto_regre_chunk_len = ar_size,
-        txt_guidance_scale = 7.5,
+        txt_guidance_scale = 1.0,
         img_guidance_scale = 1.0,
         seed = "random",
     ),
@@ -127,7 +120,6 @@ validation_configs = dict(
             first_image =  f"{_VAL_DATA_ROOT}/07U1fSrk9oI/07U1fSrk9oI_1/07U1fSrk9oI_frames_00000046.jpg",
 
             # the following configs will over-write those in `sample_cfgs`:
-            txt_guidance_scale = 7.0,
             seed = 123,
         ),
         dict(

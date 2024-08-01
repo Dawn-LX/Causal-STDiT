@@ -32,7 +32,7 @@ torchrun \
 # train skytimelapse
 
     bash scripts/train.sh \
-    configs/causal_stdit/train_SkyTimelapse_33x256x256.py \
+    configs/causal_stdit/train_SkyTimelapse_33x256x256_without_text_cond.py \
     9686 0
 
 
