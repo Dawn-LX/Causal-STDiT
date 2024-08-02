@@ -198,7 +198,7 @@ def main(cfg):
                 video_name = video_names[idx] # e.g., 07U1fSrk9oI_frames_00000046.jpg.mp4
                 sample = samples[idx]
                 save_path = os.path.join(sample_save_dir,video_name)
-                save_sample(sample,fps=8,save_path=save_path)
+                save_sample(sample.clone(),fps=8,save_path=save_path)
                 logger.info(f"rank-{rank_id} wirte video to {save_path}")
 
             dist.barrier()

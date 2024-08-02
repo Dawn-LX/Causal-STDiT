@@ -7,6 +7,8 @@ val_data_cfg = dict(
     image_size=(256,256),
     read_video = False,
     read_first_frame = True,
+    class_balance_sample = True,
+    num_samples_total = 2048,
 )
 
 batch_size = 4

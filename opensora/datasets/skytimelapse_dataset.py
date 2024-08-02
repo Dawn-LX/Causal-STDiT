@@ -1,4 +1,5 @@
 import numpy as np
+import random
 import torch
 import torchvision
 from PIL import Image
@@ -166,12 +167,71 @@ class SkyTimelapseDatasetForEvalFVD(SkyTimelapseDataset):
         self,
         read_video = True,
         read_first_frame = True,
+        class_balance_sample = True,
+        num_samples_total = None,
+        num_samples_per_class = None,
         **kwargs
     ):
+        
+        super().__init__(**kwargs)
+
         self.read_video = read_video
         self.read_first_frame = read_first_frame
-        super().__init__(**kwargs)
+
+        self.class_balance_sample = class_balance_sample
+        if class_balance_sample: # TODO add code for using `num_samples_per_class`
+            num_classes = len(self.long_vid_labels)
+            assert (num_samples_total is None) or (num_samples_per_class is None)
+            assert (num_samples_total,num_samples_per_class) != (None,None)
+            if num_samples_per_class is not None:
+                self.num_samples_total = num_classes * num_samples_per_class
+            else:
+                self.num_samples_total = num_samples_total
+            
+
+            del self.imgs 
+            imgs = make_dataset(self.root, 1,  self.class_to_idx)
+            imgs = [x[0] for x in imgs]
+
+            from collections import defaultdict
+            cls_id_to_img_paths = defaultdict(list)
+            for img_path,class_id in imgs:
+                long_vid_label, short_vid_label,filename = img_path.split('/')[-3:]
+                # 07U1fSrk9oI 07U1fSrk9oI_1 07U1fSrk9oI_frames_00000046.jpg
+                assert long_vid_label == filename.split('_frames_')[0], f"{long_vid_label},{filename}"
+                cls_id = self.class_to_idx[long_vid_label]
+                cls_id_to_img_paths[cls_id].append(img_path)
+            cls_id_to_img_paths = {k:sorted(v) for k,v in cls_id_to_img_paths.items() if len(v) >= self.n_sample_frames}
+            # TODO: what if len(cls_id_to_img_paths) < num_classes ?
+            if len(cls_id_to_img_paths) < num_classes:
+                print(f"len(cls_id_to_img_paths)={len(cls_id_to_img_paths)} < num_classes={num_classes}")
+            
+            self.cls_id_to_img_paths =  cls_id_to_img_paths
+
+    def __len__(self):
+        if self.class_balance_sample:
+            return self.num_samples_total
+        else:
+            return super().__len__(self)
     
+    def _getitem1(self, index):
+        '''
+        follow the style-GAN-V paper, refer to its Appendix
+        '''
+        num_classes = len(self.long_vid_labels)
+        class_id = index % num_classes
+        img_paths = self.cls_id_to_img_paths[class_id]
+        assert len(img_paths) >= self.n_sample_frames
+        valid_start_ids = range(0,len(img_paths)-self.n_sample_frames)
+
+        if len(valid_start_ids) > 0:
+            random_start = random.choice(valid_start_ids)
+            clip_img_paths = img_paths[random_start:random_start+self.n_sample_frames]
+        else:
+            clip_img_paths = img_paths
+
+
+
     def __getitem__(self, index):
         """
         Args:
@@ -179,11 +239,27 @@ class SkyTimelapseDatasetForEvalFVD(SkyTimelapseDataset):
         Returns:
             tuple: (image, target) where target is class_index of the target class.
         """
-        # clip is a list of 32 frames 
-        clip = self.imgs[index] 
-        clip = sorted(clip,key=lambda x:x[0]) # sort by path
+        if not self.class_balance_sample:
+            clip = self.imgs[index] 
+            clip = sorted(clip,key=lambda x:x[0]) # sort by path
+            clip_img_paths = [x[0] for x in clip]
+        else:
+            '''
+            follow the style-GAN-V paper, refer to its Appendix
+            '''
+            num_classes = len(self.long_vid_labels)
+            class_id = index % num_classes
+            img_paths = self.cls_id_to_img_paths[class_id]
+            assert len(img_paths) >= self.n_sample_frames
+            valid_start_ids = range(0,len(img_paths)-self.n_sample_frames)
 
-        _1st_path = clip[0][0]
+            if len(valid_start_ids) > 0:
+                random_start = random.choice(valid_start_ids)
+                clip_img_paths = img_paths[random_start:random_start+self.n_sample_frames]
+            else:
+                clip_img_paths = img_paths
+
+        _1st_path = clip_img_paths[0]
         long_vid_label, short_vid_label,filename = _1st_path.split('/')[-3:]
         # e.g., 07U1fSrk9oI 07U1fSrk9oI_1 07U1fSrk9oI_frames_00000046.jpg
         video_name = filename + ".mp4"
@@ -208,8 +284,7 @@ class SkyTimelapseDatasetForEvalFVD(SkyTimelapseDataset):
 
         if self.read_video:
             img_clip = []
-            for frame in clip:
-                path, target = frame
+            for path in clip_img_paths:
                 img = self.loader(path) 
                 img = torch.from_numpy(np.array(img)) # (H, W, C)
                 img_clip.append(img) 

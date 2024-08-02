@@ -205,7 +205,6 @@ def forward_with_cfg(model, x, timestep, y, cfg_scale, cfg_channel=None, **kwarg
 
 @SCHEDULERS.register_module("clean_prefix_iddpm")
 class CleanPrefixIDDPM(IDDPM):
-    MAX_AUTO_REGRESSION_LEN = 128
 
     def training_losses_clean_prefix(self, model, *args, **kwargs):
         return self._training_losses_clean_prefix(self._wrap_model( model), *args, **kwargs)
@@ -329,12 +328,13 @@ class CleanPrefixIDDPM(IDDPM):
         img_guidance_scale = 1.0,
         device = torch.device("cuda"),
         progress_bar = True,
+        **kwargs
     ):
         '''
         consider classifier_free_guidance for both txt and img
         refer to https://github.com/TIGER-AI-Lab/ConsistI2V/blob/d40d64b4c8f005ee8a4915528df705e7d586ea9a/consisti2v/pipelines/pipeline_conditional_animation.py#L341
         '''
-        bsz,num_frames = len(prompts)
+        bsz,num_frames = len(prompts),z_size[1]
         if first_img_latents is None:
             _first_img_latents = model.bov_token[None,:,None,:,:].repeat(bsz,1,1,1,1) # (bsz,c,1,h,w)
             _c,_f,_h,_w = z_size
@@ -372,7 +372,7 @@ class CleanPrefixIDDPM(IDDPM):
             y_null = text_encoder.null(bsz) if cls_free_guidance else None
         else:
             assert cls_free_guidance is None
-            model_kwargs = dict()
+            model_kwargs = {"y":None,"mask":None}
         
         if cls_free_guidance == "text":
             model_kwargs["y"] = torch.cat([y_null,model_kwargs["y"]], dim=0)
@@ -387,7 +387,7 @@ class CleanPrefixIDDPM(IDDPM):
 
         # 2. get auto-regression steps
         first_k_gievn = first_img_latents.shape[2]
-        assert first_k_gievn < num_frames and num_frames < self.MAX_AUTO_REGRESSION_LEN # remove the second term when enable kv_cache_dequeue
+        assert first_k_gievn < num_frames
         num_gen = num_frames - first_k_gievn
 
         window_sizes = []
@@ -527,7 +527,7 @@ class CleanPrefixIDDPM(IDDPM):
         
         # 2. get auto-regression steps
         first_k_gievn = first_img_latents.shape[2]
-        assert first_k_gievn < num_frames and num_frames < self.MAX_AUTO_REGRESSION_LEN # remove the second term when enable kv_cache_dequeue
+        assert first_k_gievn < num_frames
         num_gen = num_frames - first_k_gievn
 
         window_sizes = []
