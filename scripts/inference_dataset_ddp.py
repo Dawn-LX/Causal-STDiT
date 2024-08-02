@@ -4,7 +4,7 @@ import hashlib
 import os
 import gc
 from datetime import timedelta,datetime
-from pprint import pformat
+import json
 from easydict import EasyDict
 from tqdm import tqdm
 
@@ -70,15 +70,22 @@ def main(cfg):
     logger = create_logger(exp_dir)
     logger.info(f"Experiment directory created at {exp_dir}")
     
-    _backup_path = save_training_config(cfg._cfg_dict,exp_dir)
-    logger.info(f"Backup sampling config at {_backup_path}")
-
+    # make sample output dir
     exp_name = exp_dir.split('/')[-1]
     md5_tag = hashlib.md5(str(cfg._cfg_dict).encode('utf-8')).hexdigest()
     md5_tag = md5_tag + "_" + exp_name
     sample_save_dir = os.path.join(cfg.sample_save_dir,md5_tag) # maybe another disk
     os.makedirs(sample_save_dir,exist_ok=True)
     logger.info(f"sample_save_dir is:  {sample_save_dir}")
+
+    # backup sample configs:
+    _backup_path = save_training_config(cfg._cfg_dict,exp_dir)
+    
+    save_path = os.path.join(exp_dir, f"sampling_cfg_{md5_tag}.json")
+    cfg["time"] =  datetime.now().strftime("%Y-%m-%dT%H-%M-%S")
+    with open(save_path, "w") as f:
+        json.dump(cfg._cfg_dict, f, indent=4)
+    logger.info(f"Backup sampling config at {_backup_path}")
 
 
     # ======================================================
