@@ -79,11 +79,13 @@ def main(cfg):
     logger.info(f"sample_save_dir is:  {sample_save_dir}")
 
     # backup sample configs:
-    _backup_path = save_training_config(cfg._cfg_dict,exp_dir)
-    
-    save_path = os.path.join(exp_dir, f"sampling_cfg_{md5_tag}.json")
-    cfg["time"] =  datetime.now().strftime("%Y-%m-%dT%H-%M-%S")
-    with open(save_path, "w") as f:
+    _backup_path = os.path.join(exp_dir, f"sampling_cfg_{md5_tag}.json")
+    cfg.update(dict(
+        local_time_now = datetime.now().strftime("%Y-%m-%dT%H-%M-%S"),
+        utc_time_now = datetime.utcnow().strftime("%Y-%m-%dT%H-%M-%S"),
+        sample_save_dir = sample_save_dir
+    ))
+    with open(_backup_path, "w") as f:
         json.dump(cfg._cfg_dict, f, indent=4)
     logger.info(f"Backup sampling config at {_backup_path}")
 

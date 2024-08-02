@@ -5,10 +5,12 @@ val_data_cfg = dict(
     root="/data/SkyTimelapse/sky_timelapse/sky_timelapse/sky_test",
     n_sample_frames = 33,
     image_size=(256,256),
+    read_video = False,
+    read_first_frame = True,
 )
 
 batch_size = 4
-num_workers = 12
+num_workers = 8
 
 val_scheduler  = dict(
     type="clean_prefix_iddpm",

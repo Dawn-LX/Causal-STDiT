@@ -162,6 +162,16 @@ class SkyTimelapseDataset:
 
 @DATASETS.register_module()
 class SkyTimelapseDatasetForEvalFVD(SkyTimelapseDataset):
+    def __init__(
+        self,
+        read_video = True,
+        read_first_frame = True,
+        **kwargs
+    ):
+        self.read_video = read_video
+        self.read_first_frame = read_first_frame
+        super().__init__(**kwargs)
+    
     def __getitem__(self, index):
         """
         Args:
@@ -178,32 +188,39 @@ class SkyTimelapseDatasetForEvalFVD(SkyTimelapseDataset):
         # e.g., 07U1fSrk9oI 07U1fSrk9oI_1 07U1fSrk9oI_frames_00000046.jpg
         video_name = filename + ".mp4"
 
-        img_clip = []
-        for frame in clip:
-            path, target = frame
-            img = self.loader(path) 
-            img = torch.from_numpy(np.array(img)) # (H, W, C)
-            img_clip.append(img) 
-        video = torch.stack(img_clip,dim=0) # (T, H, W, C)
-        video = video.permute(0,3,1,2) # TCHW
-        video = self.transforms(video) # TCHW
-        video = video.permute(1,0,2,3) # TCHW -> CTHW
-        
-        first_frame = video[:,0,None,:,:] # (C, 1, H, W)
-        # first_image = torchvision.io.read_image(first_image_path,torchvision.io.ImageReadMode.RGB) # (3,h,w)
-
         if self.unified_prompt is None:
             text = anno["prompt"] # TODO
         else:
             text = self.unified_prompt
-
+        
         sample = dict(
             video_name = video_name,
             text =  text,
-            first_frame = first_frame,
-            video = video,
-            actual_length = video.shape[0]
         )
+        if self.read_first_frame:
+            first_frame = torchvision.io.read_image(_1st_path,torchvision.io.ImageReadMode.RGB) # (3,h,w)
+            first_frame = first_frame.unsqueeze(0) # (1, C, H, W)
+            first_frame = self.transforms(first_frame) # TCHW
+            sample.update({
+                "first_frame":first_frame.permute(1,0,2,3), # TCHW -> CTHW
+                "actual_length": 1
+            })
+
+        if self.read_video:
+            img_clip = []
+            for frame in clip:
+                path, target = frame
+                img = self.loader(path) 
+                img = torch.from_numpy(np.array(img)) # (H, W, C)
+                img_clip.append(img) 
+            video = torch.stack(img_clip,dim=0) # (T, H, W, C)
+            video = video.permute(0,3,1,2) # TCHW
+            video = self.transforms(video) # TCHW
+            
+            sample.update({
+                "video":video.permute(1,0,2,3), # TCHW -> CTHW
+                "actual_length": video.shape[0]
+            })
 
         return sample
     
