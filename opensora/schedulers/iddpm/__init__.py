@@ -560,7 +560,8 @@ class CleanPrefixIDDPM(IDDPM):
         # 4.2 wirte kv-cache for first frame
         model_kwargs.update((dict(start_id = 0)))
         write_kv_cache(model, z_predicted, model_kwargs, cls_free_guidance,
-            noise = noise[:,:,0:predict_start_id,:,:] if cls_free_guidance == "both" else None
+            noise = noise[:,:,0:predict_start_id,:,:] if cls_free_guidance == "both" else None,
+            verbose=progress_bar
         )
         # 4.3 auto-regression loop
         for ar_step in range(auto_regre_steps):
@@ -591,7 +592,7 @@ class CleanPrefixIDDPM(IDDPM):
             '''NOTE
             It's diffuclt to get exactly the same frame results as sample w/o kv-cache (even we use the same seed)
             我们很难获得与 sample w/o kv_cache 完全一致的结果（即使seed相同）
-            因为 p_sample 中 x_{t-1} = mean + var * noise noise 是按照 z_input.shape 取的 randn， 
+            因为 p_sample 中 x_{t-1} = mean + var * noise 的 noise 是按照 z_input.shape 取的 randn， 
             for w/ kv_cache, z_input.shape only include current window
             for w/o kv_cache, z_input.shape include all previous predictions
             '''
@@ -599,7 +600,8 @@ class CleanPrefixIDDPM(IDDPM):
             # only record clean sample's kv-cache, and thus, mask_channel is all zeros, timestep emb also use t0's emb
             # so mask_channel & timestep_emb are not fed into model_kwargs, model_kwargs: {y, y_mask, start_id}
             write_kv_cache(model, samples, model_kwargs, cls_free_guidance,
-                noise = noise[:,:,predict_start_id:predict_start_id+ws,:,:] if cls_free_guidance == "both" else None
+                noise = noise[:,:,predict_start_id:predict_start_id+ws,:,:] if cls_free_guidance == "both" else None,
+                verbose=progress_bar
             )
 
             # extend z_predicted
@@ -686,7 +688,7 @@ def forward_with_cfg2(
     return model_out
 
 
-def write_kv_cache(model,z_predicted,model_kwargs,cls_free_guidance,noise):
+def write_kv_cache(model,z_predicted,model_kwargs,cls_free_guidance,noise,verbose=True):
     if cls_free_guidance == "text":
         z = torch.cat([z_predicted]*2,dim=0) # (2*b, c, ws, h, w)
     elif cls_free_guidance == "both":
@@ -703,7 +705,8 @@ def write_kv_cache(model,z_predicted,model_kwargs,cls_free_guidance,noise):
     
     start_id = model_kwargs["start_id"]
     write_len = z.shape[2]
-    print(f"write_kv_cache for [{start_id}:{start_id+write_len})")
+    if verbose:
+        print(f"write_kv_cache for [{start_id}:{start_id+write_len})")
     model.write_kv_cache(z, **model_kwargs) # z , y, y_mask, predict_start_id
     # always use mask_channel = all ones, and t_input = t0 for kv_cache computing
 

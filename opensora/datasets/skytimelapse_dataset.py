@@ -160,4 +160,126 @@ class SkyTimelapseDataset:
 
         return sample
 
+@DATASETS.register_module()
+class SkyTimelapseDatasetForEvalFVD(SkyTimelapseDataset):
+    def __getitem__(self, index):
+        """
+        Args:
+            index (int): Index
+        Returns:
+            tuple: (image, target) where target is class_index of the target class.
+        """
+        # clip is a list of 32 frames 
+        clip = self.imgs[index] 
+        clip = sorted(clip,key=lambda x:x[0]) # sort by path
+
+        _1st_path = clip[0][0]
+        long_vid_label, short_vid_label,filename = _1st_path.split('/')[-3:]
+        # e.g., 07U1fSrk9oI 07U1fSrk9oI_1 07U1fSrk9oI_frames_00000046.jpg
+        video_name = filename + ".mp4"
+
+        img_clip = []
+        for frame in clip:
+            path, target = frame
+            img = self.loader(path) 
+            img = torch.from_numpy(np.array(img)) # (H, W, C)
+            img_clip.append(img) 
+        video = torch.stack(img_clip,dim=0) # (T, H, W, C)
+        video = video.permute(0,3,1,2) # TCHW
+        video = self.transforms(video) # TCHW
+        video = video.permute(1,0,2,3) # TCHW -> CTHW
+        
+        first_frame = video[:,0,None,:,:] # (C, 1, H, W)
+        # first_image = torchvision.io.read_image(first_image_path,torchvision.io.ImageReadMode.RGB) # (3,h,w)
+
+        if self.unified_prompt is None:
+            text = anno["prompt"] # TODO
+        else:
+            text = self.unified_prompt
+
+        sample = dict(
+            video_name = video_name,
+            text =  text,
+            first_frame = first_frame,
+            video = video,
+            actual_length = video.shape[0]
+        )
+
+        return sample
     
+
+@DATASETS.register_module()
+class SkyTimelapseDatasetEvalImg2Vid_old:
+    def __init__(
+        self, 
+        root,
+        n_sample_frames,
+        image_size = (128, 128),
+        loader=pil_loader,
+        print_fn = print
+    ):
+        
+        classes, class_to_idx = find_classes(root)
+        self.root = root
+        self.split = root.split('/')[-1].split('_')[-1]
+        self.classes = classes
+        self.class_to_idx = class_to_idx
+        self.loader = loader
+        self.n_sample_frames = n_sample_frames
+
+        long_vid_labels = classes
+
+        short_vid_labels = []
+        for long_vid_dir in long_vid_labels:
+            short_vids = os.listdir(os.path.join(root,long_vid_dir))
+            # print(short_vids)
+            short_vids = [
+                sv for sv in short_vids 
+                if os.path.isdir(os.path.join(root,long_vid_dir,sv))
+            ]
+            short_vid_labels.extend(short_vids)
+        self.long_vid_labels = long_vid_labels # 111 for test set
+        self.short_vid_labels = short_vid_labels # 225 for test set
+
+        
+        image_infos = make_dataset(root,1,class_to_idx)
+        image_infos = [x[0] for x in image_infos]
+
+        short_vid_to_1st_frame_map = {label:[] for label in short_vid_labels}
+        for img_path,class_id in image_infos:
+            long_vid_label, short_vid_label,filename = img_path.split('/')[-3:]
+            # 07U1fSrk9oI 07U1fSrk9oI_1 07U1fSrk9oI_frames_00000046.jpg
+
+            short_vid_to_1st_frame_map[short_vid_label].append(img_path)
+        # IlMFL8RxgeY_7
+        short_vid_to_1st_frame_map = {k:v for k,v in short_vid_to_1st_frame_map.items() if len(v) > 0}
+        short_vid_to_1st_frame_map = {k:sorted(v)[0] for k,v in short_vid_to_1st_frame_map.items()}
+        self.short_vid_to_1st_frame_map = short_vid_to_1st_frame_map
+
+        self.image_size = image_size
+        self.transforms = torchvision.transforms.Compose([
+            video_transforms.ToTensorVideo(), # TCHW
+            video_transforms.ResizeCenterCropVideo(image_size),
+            torchvision.transforms.Normalize(mean=[0.5,0.5,0.5],std=[0.5,0.5,0.5],inplace=True) # to -1 ~ 1
+        ])
+        
+        print_fn(f"SkyTimelapseDatasetEvalImg2Vid is built, containing {len(self)} short videos with 1st frames")
+
+
+    def __len__(self):
+        return len(self.short_vid_to_1st_frame_map)
+
+    def __getitem__(self,idx):
+        
+        first_frame_path = self.short_vid_to_1st_frame_map[idx]
+        img = self.loader(first_frame_path) 
+        img = torch.from_numpy(np.array(img)).unsqueeze(0) # (1, H, W, C)
+        
+        img = img.permute(0,3,1,2) # TCHW
+        img = self.transforms(img) # TCHW
+
+        sample = {
+            "first_frame":img.permute(1,0,2,3), # TCHW -> CTHW
+            "actual_length": 1
+        }
+        return sample

@@ -2,7 +2,7 @@ import torch
 import torch.distributed as dist
 from opensora.registry import DATASETS, MODELS, SCHEDULERS, build_module
 from opensora.datasets import prepare_dataloader
-from opensora.datasets.skytimelapse_dataset import SkyTimelapseDataset
+from opensora.datasets.skytimelapse_dataset import SkyTimelapseDataset,SkyTimelapseDatasetForEvalFVD
 
 
 def skytimelapse_demo():
@@ -33,5 +33,34 @@ def skytimelapse_demo():
             print(k,v)
         break
 
+def skytimelapse_test_set_demo():
+    
+    test_data_cfg = dict(
+        type="SkyTimelapseDatasetForEvalFVD",
+        
+        root="/data/SkyTimelapse/sky_timelapse/sky_timelapse/sky_test",
+        n_sample_frames = 16,
+        image_size=(128,128),
+    )
+
+    dataset:SkyTimelapseDatasetForEvalFVD = build_module(test_data_cfg, DATASETS)
+
+    dist.init_process_group(rank=0)
+    dataloader = prepare_dataloader(
+        dataset,
+        batch_size=4,
+        shuffle=True,
+        drop_last=False,
+        num_workers=4,
+        process_group=dist.group.WORLD
+    )
+    for data in dataloader:
+        for k,v in data.items():
+            v = v.shape if isinstance(v,torch.Tensor) else v
+            print(k,v)
+        break
+    
+
 if __name__ == "__main__":
-    skytimelapse_demo()
+    # skytimelapse_demo()
+    skytimelapse_test_set_demo()

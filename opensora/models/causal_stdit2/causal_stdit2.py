@@ -720,19 +720,23 @@ class CausalSTDiT2(nn.Module):
         # empty kv-cache to save GPU memory
         
         if self._kv_cache_registered:
-            # self.cache_kv.zero_()
-            # self.cache_indicator.zero_()
             del self.cache_kv
             del self.cache_indicator
 
             if self.spatial_attn_enhance is not None:
-                # self.spatial_ctx_kv.zero_()
                 del self.spatial_ctx_kv
 
                 if self.spatial_attn_enhance =="first_frame":
                     self._1st_frame_kv_written = False
 
             self._kv_cache_registered = False
+    
+    def reset_kv_cache(self):
+        if self._kv_cache_registered:
+            self.cache_kv.zero_()
+            self.cache_indicator.zero_()
+            if self.spatial_attn_enhance is not None:
+                self.spatial_ctx_kv.zero_()
 
     @torch.no_grad()
     def write_kv_cache(self,clean_x,y,mask,start_id): 
@@ -752,6 +756,9 @@ class CausalSTDiT2(nn.Module):
 
     def register_kv_cache(self,bsz,max_seq_len=None,kv_cache_dequeue=True):
         '''NOTE bsz should take account into cls_free_guidance'''
+        if self._kv_cache_registered:
+            self.reset_kv_cache()
+            return
 
         device = self.pos_embed_temporal.device
         dtype = self.pos_embed_temporal.dtype
