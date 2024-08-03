@@ -83,6 +83,7 @@ class SkyTimelapseDataset:
         loader=pil_loader,
         print_fn = print
     ):
+        self.print_fn = print_fn
         classes, class_to_idx = find_classes(root)
         imgs = make_dataset(root, n_sample_frames,  class_to_idx)
         if len(imgs) == 0:
@@ -120,7 +121,6 @@ class SkyTimelapseDataset:
         self.image_size = image_size
         self.transforms = torchvision.transforms.Compose([
             video_transforms.ToTensorVideo(), # TCHW
-            video_transforms.RandomHorizontalFlipVideo(),
             video_transforms.ResizeCenterCropVideo(image_size),
             torchvision.transforms.Normalize(mean=[0.5,0.5,0.5],std=[0.5,0.5,0.5],inplace=True) # to -1 ~ 1
         ])
@@ -168,8 +168,10 @@ class SkyTimelapseDatasetForEvalFVD(SkyTimelapseDataset):
         read_video = True,
         read_first_frame = True,
         class_balance_sample = True,
+        long_vid_as_class = True,
         num_samples_total = None,
         num_samples_per_class = None,
+        allow_short_video = False, # allow videos shorter than n_sample_frames
         **kwargs
     ):
         
@@ -177,10 +179,12 @@ class SkyTimelapseDatasetForEvalFVD(SkyTimelapseDataset):
 
         self.read_video = read_video
         self.read_first_frame = read_first_frame
+        self.allow_short_video = allow_short_video
 
         self.class_balance_sample = class_balance_sample
-        if class_balance_sample: # TODO add code for using `num_samples_per_class`
-            num_classes = len(self.long_vid_labels)
+        if class_balance_sample:
+            self.long_vid_as_class = long_vid_as_class
+            num_classes = len(self.long_vid_labels) if self.long_vid_as_class else len(self.short_vid_labels)
             assert (num_samples_total is None) or (num_samples_per_class is None)
             assert (num_samples_total,num_samples_per_class) != (None,None)
             if num_samples_per_class is not None:
@@ -194,19 +198,36 @@ class SkyTimelapseDatasetForEvalFVD(SkyTimelapseDataset):
             imgs = [x[0] for x in imgs]
 
             from collections import defaultdict
-            cls_id_to_img_paths = defaultdict(list)
+            
+            longvid_to_img_paths = defaultdict(list)
+            shortvid_to_img_paths = defaultdict(list)
             for img_path,class_id in imgs:
                 long_vid_label, short_vid_label,filename = img_path.split('/')[-3:]
                 # 07U1fSrk9oI 07U1fSrk9oI_1 07U1fSrk9oI_frames_00000046.jpg
                 assert long_vid_label == filename.split('_frames_')[0], f"{long_vid_label},{filename}"
                 cls_id = self.class_to_idx[long_vid_label]
-                cls_id_to_img_paths[cls_id].append(img_path)
-            cls_id_to_img_paths = {k:sorted(v) for k,v in cls_id_to_img_paths.items() if len(v) >= self.n_sample_frames}
-            # TODO: what if len(cls_id_to_img_paths) < num_classes ?
-            if len(cls_id_to_img_paths) < num_classes:
-                print(f"len(cls_id_to_img_paths)={len(cls_id_to_img_paths)} < num_classes={num_classes}")
+                
+                longvid_to_img_paths[long_vid_label].append(img_path)
+                shortvid_to_img_paths[short_vid_label].append(img_path)
+
             
-            self.cls_id_to_img_paths =  cls_id_to_img_paths
+            if allow_short_video:
+                longvid_to_img_paths = {k:sorted(v) for k,v in longvid_to_img_paths.items() if len(v) >=2}
+                shortvid_to_img_paths = {k:sorted(v) for k,v in shortvid_to_img_paths.items() if len(v) >= 2}
+            else:
+                longvid_to_img_paths = {k:sorted(v) for k,v in longvid_to_img_paths.items() if len(v) >= self.n_sample_frames}
+                shortvid_to_img_paths = {k:sorted(v) for k,v in shortvid_to_img_paths.items() if len(v) >= self.n_sample_frames}
+
+            self.print_fn(f"use class_balance_sample, num_samples_total={self.num_samples_total}, n_sample_frames = {self.n_sample_frames}")
+            if self.long_vid_as_class:
+                if len(longvid_to_img_paths) < len(self.long_vid_labels):
+                    self.print_fn(f"len(longvid_to_img_paths)={len(longvid_to_img_paths)} < num_long_video={len(self.long_vid_labels)}")
+            else:
+                if len(shortvid_to_img_paths) < len(self.short_vid_labels):
+                    self.print_fn(f"len(shortvid_to_img_paths)={len(shortvid_to_img_paths)} < num_short_video={len(self.short_vid_labels)}")
+            
+            self.longvid_to_img_paths =  longvid_to_img_paths
+            self.shortvid_to_img_paths =  shortvid_to_img_paths
 
     def __len__(self):
         if self.class_balance_sample:
@@ -214,31 +235,8 @@ class SkyTimelapseDatasetForEvalFVD(SkyTimelapseDataset):
         else:
             return super().__len__(self)
     
-    def _getitem1(self, index):
-        '''
-        follow the style-GAN-V paper, refer to its Appendix
-        '''
-        num_classes = len(self.long_vid_labels)
-        class_id = index % num_classes
-        img_paths = self.cls_id_to_img_paths[class_id]
-        assert len(img_paths) >= self.n_sample_frames
-        valid_start_ids = range(0,len(img_paths)-self.n_sample_frames)
-
-        if len(valid_start_ids) > 0:
-            random_start = random.choice(valid_start_ids)
-            clip_img_paths = img_paths[random_start:random_start+self.n_sample_frames]
-        else:
-            clip_img_paths = img_paths
-
-
 
     def __getitem__(self, index):
-        """
-        Args:
-            index (int): Index
-        Returns:
-            tuple: (image, target) where target is class_index of the target class.
-        """
         if not self.class_balance_sample:
             clip = self.imgs[index] 
             clip = sorted(clip,key=lambda x:x[0]) # sort by path
@@ -247,10 +245,21 @@ class SkyTimelapseDatasetForEvalFVD(SkyTimelapseDataset):
             '''
             follow the style-GAN-V paper, refer to its Appendix
             '''
-            num_classes = len(self.long_vid_labels)
-            class_id = index % num_classes
-            img_paths = self.cls_id_to_img_paths[class_id]
-            assert len(img_paths) >= self.n_sample_frames
+            class2idx = self.long_vid_labels if self.long_vid_as_class else self.short_vid_labels
+            num_classes = len(class2idx)
+            class2paths = self.longvid_to_img_paths if self.long_vid_as_class else self.shortvid_to_img_paths
+            class_name = class2idx[index % num_classes]
+            _i=1
+            while class_name not in class2paths.keys():
+                # maybe len(class2paths) < num_classes
+                index = random.choice(range(len(self)))
+                _i+=1
+                class_name = class2idx[index % num_classes]
+                if _i > 10000:
+                    assert False, f"too many bad data: class_name={class_name}"
+            
+            img_paths = class2paths[class_name]
+            assert len(img_paths) >= (2 if self.allow_short_video else self.n_sample_frames)
             valid_start_ids = range(0,len(img_paths)-self.n_sample_frames)
 
             if len(valid_start_ids) > 0:
@@ -262,7 +271,7 @@ class SkyTimelapseDatasetForEvalFVD(SkyTimelapseDataset):
         _1st_path = clip_img_paths[0]
         long_vid_label, short_vid_label,filename = _1st_path.split('/')[-3:]
         # e.g., 07U1fSrk9oI 07U1fSrk9oI_1 07U1fSrk9oI_frames_00000046.jpg
-        video_name = filename + ".mp4"
+        video_name = f"{index:05d}_{filename}.mp4"
 
         if self.unified_prompt is None:
             text = anno["prompt"] # TODO
@@ -296,6 +305,8 @@ class SkyTimelapseDatasetForEvalFVD(SkyTimelapseDataset):
                 "video":video.permute(1,0,2,3), # TCHW -> CTHW
                 "actual_length": video.shape[0]
             })
+
+        assert not self.allow_short_video, "TODO, do zero-padding for the stack operation in collate_fn"
 
         return sample
     
