@@ -5,13 +5,15 @@ import torch.nn.functional as F
 import numpy as np
 import einops
 
-def load_i3d_pretrained(device=torch.device('cpu')):
-    i3D_WEIGHTS_URL = "https://onedrive.live.com/download?cid=78EEF3EB6AE7DBCB&resid=78EEF3EB6AE7DBCB%21199&authkey=AApKdFHPXzWLNyI"
-    filepath = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'i3d_pretrained_400.pt')
-    print(filepath)
-    if not os.path.exists(filepath):
+def load_i3d_pretrained(weights_path=None,device=torch.device('cpu')):
+    if weights_path is None:
+        i3D_WEIGHTS_URL = "https://onedrive.live.com/download?cid=78EEF3EB6AE7DBCB&resid=78EEF3EB6AE7DBCB%21199&authkey=AApKdFHPXzWLNyI"
+        filepath = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'i3d_pretrained_400.pt')
         print(f"preparing for download {i3D_WEIGHTS_URL}, you can download it by yourself.")
         os.system(f"wget {i3D_WEIGHTS_URL} -O {filepath}")
+        print(f"i3d weights saved at {filepath}")
+    else:
+        filepath = weights_path
     from .pytorch_i3d import InceptionI3d
     i3d = InceptionI3d(400, in_channels=3).eval().to(device)
     i3d.load_state_dict(torch.load(filepath, map_location=device))

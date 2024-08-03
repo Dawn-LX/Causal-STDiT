@@ -36,7 +36,7 @@ def pil_loader(path):
     return Im.convert('RGB')
 
 
-def make_dataset(dir, nframes, class_to_idx):
+def make_dataset(dir, nframes, class_to_idx,silent=False):
     images = []
     n_video = 0 # long-video
     n_clip = 0 # short-video
@@ -65,11 +65,12 @@ def make_dataset(dir, nframes, class_to_idx):
                                 images.append(item_frames) # item_frames is a list containing n frames. 
                                 item_frames = []
                             i = i+1
-    print('number of long videos:')
-    print(n_video)
-    print('number of short videos')
-    print(n_clip)
-    print(f"cut with {nframes} each, number of clips: {len(images)}")
+    if not silent:
+        print('number of long videos:')
+        print(n_video)
+        print('number of short videos')
+        print(n_clip)
+        print(f"cut with {nframes} each, number of clips: {len(images)}")
     return images
 
 @DATASETS.register_module()
@@ -194,7 +195,7 @@ class SkyTimelapseDatasetForEvalFVD(SkyTimelapseDataset):
             
 
             del self.imgs 
-            imgs = make_dataset(self.root, 1,  self.class_to_idx)
+            imgs = make_dataset(self.root, 1,  self.class_to_idx,silent=True)
             imgs = [x[0] for x in imgs]
 
             from collections import defaultdict

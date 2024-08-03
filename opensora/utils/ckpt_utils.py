@@ -240,11 +240,11 @@ def load(
     )
 
 
-def create_logger(logging_dir):
+def create_logger(logging_dir,return_log_path=False):
     """
     Create a logger that writes to a log file and stdout.
     """
-    if dist.get_rank() == 0:  # real logger
+    if (not dist.is_initialized()) or dist.get_rank() == 0:  # real logger
         now = datetime.datetime.now().strftime("%Y-%m-%dT%H-%M-%S")
         logging.basicConfig(
             level=logging.INFO,
@@ -252,10 +252,12 @@ def create_logger(logging_dir):
             datefmt="%Y-%m-%d %H:%M:%S",
             handlers=[
                 logging.StreamHandler(),
-                logging.FileHandler(f"{logging_dir}/{now}.log"),
+                logging.FileHandler(log_path:=f"{logging_dir}/{now}.log"),
             ],
         )
         logger = logging.getLogger(__name__)
+        if return_log_path:
+            return logger,log_path
     else:  # dummy logger (does nothing)
         logger = logging.getLogger(__name__)
         logger.addHandler(logging.NullHandler())

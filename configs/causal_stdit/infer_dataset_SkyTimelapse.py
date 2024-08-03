@@ -3,7 +3,7 @@ val_data_cfg = dict(
     type="SkyTimelapseDatasetForEvalFVD",
     
     root="/data/SkyTimelapse/sky_timelapse/sky_timelapse/sky_test",
-    n_sample_frames = 33,
+    n_sample_frames = 32,
     image_size=(256,256),
     read_video = False,
     read_first_frame = True,
@@ -23,7 +23,7 @@ val_scheduler  = dict(
 sample_cfgs = dict(
     width = 256,
     height = 256,
-    num_frames = val_data_cfg["n_sample_frames"],
+    num_frames = 33, # TODO use auto-regression len
     auto_regre_chunk_len = 8,
     txt_guidance_scale = 1.0,
     img_guidance_scale = 1.0,
