@@ -120,6 +120,25 @@ class MaskGenerator:
         return masks
 
 
+### noise prior
+
+
+def build_progressive_noise(alpha, shape, start_noise):
+    # shape: (b,c,f,h,w)
+    # start_noise (b,c,1,h,w)
+    
+    noise = torch.randn(shape,device=start_noise.device,dtype=start_noise.dtype)
+    if alpha > 0:
+        prev_noise = start_noise # (b,c,1,h,w)
+        progressive_noises = [prev_noise]
+        for i in range(1,noise.shape[2]):
+            new_noise = (alpha / math.sqrt(1+alpha**2)) * prev_noise + (1/math.sqrt(1+alpha**2)) * noise[:,:,1:i+1,:,:]
+            progressive_noises.append(new_noise)
+            prev_noise = new_noise
+        progressive_noises = torch.cat(progressive_noises,dim=2) # (b,c,f,h,w)
+        noise = progressive_noises
+    return noise
+
 ### Prefix Frame (frame as prompt) utils:
 
 def _get_prefix_len_choices(ar_size,max_length,n_given_frames=1):

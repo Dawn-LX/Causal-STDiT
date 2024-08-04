@@ -50,8 +50,8 @@ def main(cfg):
     # ======================================================
     # 1. args & cfg
     # ======================================================
-    if cfg.fix_ar_size:
-        prefix_len_sampler = PrefixLenSampler(cfg.ar_size,cfg.prefix_min_len,cfg.prefix_sampling_strategy)
+    assert cfg.fix_ar_size, "refer to _backup/train_backup_before_remove_reweight_loss.py"
+    prefix_len_sampler = PrefixLenSampler(cfg.ar_size,cfg.prefix_min_len,cfg.prefix_sampling_strategy)
 
     # ======================================================
     # 2. runtime variables & colossalai launch
@@ -111,20 +111,7 @@ def main(cfg):
     # ======================================================
     train_data_cfg = deepcopy(cfg.train_data_cfg)
     dataset = build_module(train_data_cfg, DATASETS, print_fn = logger.info)  # VideoTextDatasetFromJson
-
-    dataset_cls = train_data_cfg.pop("type",None)
-    ''' TODO add other public dataset
-    try:
-        dataset_cls = {
-            None: VideoDataset, # a general dataset
-            "msrvtt":MsrvttDataset,
-            "ucf101":UCF101Dataset,
-            "sky_timelapse":SkyTimelapseDataset
-        }[dataset_cls.lower()]
-    except KeyError:
-        raise NotImplementedError(f"dataset {dataset_cls} is not implemented")
-    '''
-    logger.info(f"Dataset `{dataset_cls}` is built, with {len(dataset)} videos.")
+    logger.info(f"Dataset `{train_data_cfg.type}` is built, with {len(dataset)} videos.")
     dataloader = prepare_dataloader(
         dataset,
         batch_size=cfg.batch_size,
@@ -260,7 +247,9 @@ def main(cfg):
     val_examples = val_examples if val_examples is not None else val_cfgs.examples_json 
     val_examples = build_validate_examples(val_examples,val_cfgs.sample_cfgs,print_fn=logger.info)
     if cfg.validate_before_train and coordinator.is_master():
+        model.eval()
         validation_visualize(model.module,vae,text_encoder,val_examples,val_cfgs,exp_dir,writer,global_step)
+        model.train()
 
     # 6.3. training loop
 
@@ -306,37 +295,14 @@ def main(cfg):
                     '''
                     assert actual_length is not None
                     assert cfg.prefix_min_len < (min_act_L := (actual_length.min().item())), "mask sure use condition_th to filter data"
-                    if cfg.fix_ar_size:
-                        cfg.reweight_loss_per_frame = False # disable this
-                        cfg.reweight_loss_const_len = None
-                        v_len = prefix_len_sampler.random_choose(min_act_L)
-                    
-                    else:
-                        visual_prompt_len = random.choice(range(cfg.prefix_min_len,min_act_L))
-                        v_len = visual_prompt_len # v_len > 1
-                    
-                    predict_start_id = v_len
-                    if cfg.img_dropout_prob > 0:
-                        prefix_drop_mask = torch.rand(size=(bsz,),device=device) < cfg.img_dropout_prob
-                        prefix_keep_mask = ~prefix_drop_mask # 1 for clean_prefix, 0 for use <BOV> token
-                        if (n_drop := prefix_drop_mask.sum()) > 0:
-                            x[prefix_drop_mask,:,0,:,:] = model.module.bov_token[None,:,:,:].repeat(n_drop,1,1,1) # (n_drop, C, H/P, W/P)
-                    else:
-                        prefix_keep_mask = torch.ones(size=(bsz,), device=device,dtype=torch.bool)
-                    
+                    assert cfg.img_dropout_prob == 0 or cfg.img_dropout_prob==0.0,"TODO: refer to _backup/train_backup_before_remove_reweight_loss.py"
+
+                    pL = prefix_len_sampler.random_choose(min_act_L)
                     loss_mask = torch.zeros_like(x) # (bsz,c,f,h,w)
                     mask_channel = torch.zeros_like(loss_mask[:,0:1,:,:1,:1]) # (bsz,1,f,1,1)
-                    for b, act_L in enumerate(actual_length.tolist()):
-                        # this for-loop is inevitable since each sample has different act_L
-                        denoise_len = act_L - v_len if not cfg.fix_ar_size else min(1+cfg.ar_size,act_L)
-                        denoise_len_bov = act_L if not cfg.fix_ar_size else min(1+cfg.ar_size,act_L)
-
-                        if prefix_keep_mask[b]: # random keep, this happens with high prob, e.g., 0.9
-                            loss_mask[b,:,v_len:v_len+denoise_len,:,:] = 1
-                            mask_channel[b,:,:v_len,:,:] = 1 # 1 for visual prompt, 0 for prediction
-                        else:
-                            loss_mask[b,:,:denoise_len_bov,:,:] = 1 # use <BOV> as visual prompt, i.e., v_len=1, but also compute loss for the 1st predicted frame
-                            mask_channel[b,:,:1,:,:] = 1
+                    denoise_len = min(cfg.ar_size,min_act_L)
+                    loss_mask[:,:,pL:pL+denoise_len,:,:] = 1
+                    mask_channel[:,:,:pL,:,:] = 1
                     
                     model_kwargs.update(dict(
                         mask_channel = mask_channel, # (bsz,1,f,1,1)
@@ -355,12 +321,6 @@ def main(cfg):
                 else:
                     loss_mask = None
 
-                if cfg.reweight_loss_per_frame and (loss_mask is not None):
-                    assert not cfg.fix_ar_size
-                    loss_mask = reweight_loss_mask(loss_mask,cfg.reweight_loss_const_len)
-                    # convert binary mask to weighted mask
-
-
                 # Diffusion
                 t = torch.randint(0, scheduler.num_timesteps, (x.shape[0],), device=device)
                 if cfg.clean_prefix and cfg.clean_prefix_set_t0:
@@ -368,11 +328,7 @@ def main(cfg):
                     num_frames = x.shape[2]
                     t_input = t[:,None].repeat(1,num_frames) # (bsz,f)
                     # NOTE we do not modift `t` inplace, because `p_sample_loop` only accepts `t` with shape (bsz,)
-                    if cfg.img_dropout_prob > 0:
-                        t_input[prefix_keep_mask,:v_len] = 0
-                        t_input[prefix_drop_mask,:1] = 0 # for <bov> token
-                    else:
-                        t_input[:,:v_len] = 0
+                    t_input[:,:pL] = 0
                     model_kwargs.update(dict(t_input=t_input))
 
                 if loss_mask is not None:
@@ -453,8 +409,9 @@ def main(cfg):
                 
                 if (cfg.validation_every_step > 0) and (global_step % cfg.validation_every_step==0) and is_update:
                     if coordinator.is_master():
+                        model.eval()
                         validation_visualize(model.module,vae,text_encoder,val_examples,val_cfgs,exp_dir,writer,global_step)
-                        
+                        model.train()
                         assert not envs.DEBUG_WITHOUT_LOAD_PRETRAINED # incase we forgot to turn this off
 
                     dist.barrier()
@@ -527,10 +484,11 @@ def validation_visualize(model,vae,text_encoder,val_examples,val_cfgs,exp_dir,wr
     os.makedirs(save_dir,exist_ok=True)
 
     val_scheduler = build_module(val_cfgs.scheduler,SCHEDULERS)
-    enable_kv_cache = val_cfgs.pop("enable_kv_cache",True)
-    kv_cache_dequeue = val_cfgs.pop("kv_cache_dequeue",True)
+    enable_kv_cache = val_cfgs.get("enable_kv_cache",True)
+    kv_cache_dequeue = val_cfgs.get("kv_cache_dequeue",True)
+    kv_cache_max_seqlen = val_cfgs.get("kv_cache_max_seqlen",None)
     sample_func = val_scheduler.sample_with_kv_cache if enable_kv_cache else val_scheduler.sample
-    kv_cache_max_seqlen = val_cfgs.kv_cache_max_seqlen
+    
     for idx,example in enumerate(val_examples):
         current_seed = example.seed
         if current_seed == "random":
@@ -608,8 +566,8 @@ def reweight_loss_mask(loss_mask,const_len):
 
 def merge_args(cfg,args):
     default_cfgs = dict(
-        clean_prefix = False,
-        clean_prefix_set_t0 = False,
+        clean_prefix = True,
+        clean_prefix_set_t0 = True,
         prefix_perturb_t = -1,
         txt_dropout_prob = 0,
         img_dropout_prob = 0,
@@ -617,18 +575,14 @@ def merge_args(cfg,args):
 
         ### random sample prefix_len = 1 ~ max_L - 1
         prefix_min_len = 1,
-        reweight_loss_const_len = 16,
-        reweight_loss_per_frame = False,
-
-        ### if auto-regre window size at training & inference time
-        # if fix_ar_size =True, disable the above `reweight_loss_const_len` and `reweight_loss_per_frame`
-        # and the prefix_len is sampled from [1, 5, 9, ...] (for prefix_min_len=1 and ar_step=4)
-        fix_ar_size = False,
         ar_size = 4,
         prefix_sampling_strategy = None, # TODO: e.g., sample short prefix at early training epochs and longer prefix later
 
         ### dataloader cfgs:
         sampler_seed = None,
+
+        ### deprecated_cfgs
+        fix_ar_size= True
     )
 
     for k, v in default_cfgs.items():

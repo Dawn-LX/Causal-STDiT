@@ -102,6 +102,40 @@ class IDDPM(SpacedDiffusion):
         )
         samples, _ = samples.chunk(2, dim=0)
         return samples
+    
+    def sample_v2(
+        self,
+        model,
+        z,
+        prompts,
+        device,
+        model_kwargs = None,
+        progress_bar = True,
+        mask=None,
+        **kwargs
+    ):
+        '''modifications:
+        remove text_encoder here, prepare {y,mask} outside the sample func
+        '''
+        
+        bsz = len(prompts)
+        if self.progressive_alpha > 0:
+            z = build_progressive_noise(self.progressive_alpha,z)
+        
+        forward = partial(forward_with_cfg_v2, model, cfg_scale=self.cfg_scale)
+        samples = self.p_sample_loop(
+            forward,
+            z.shape,
+            z,
+            clip_denoised=False,
+            model_kwargs=model_kwargs,
+            progress=progress_bar,
+            device=device,
+            mask=None, # not used, we use our own "cond_mask" in `model_kwargs`
+        ) # (B, C, T, H, W)
+        
+        return samples
+    
 
     def training_losses_with_mask(self, model, *args, **kwargs):
         return self._training_losses_with_mask(self._wrap_model(model), *args, **kwargs)
@@ -202,6 +236,62 @@ def forward_with_cfg(model, x, timestep, y, cfg_scale, cfg_channel=None, **kwarg
     half_eps = uncond_eps + cfg_scale * (cond_eps - uncond_eps) # (b,c,f,h,w)
     eps = torch.cat([half_eps, half_eps], dim=0) # (2b,c,f,h,w)
     return torch.cat([eps, rest], dim=1) # (2b,2c,f,h,w)
+
+def forward_with_cfg_v2(model, x, timestep, cfg_scale, **model_kwargs):
+    '''
+    modifications:
+        - support both w/ cfg and w/o cfg
+        - support w/o txt condition (i.e., y=None)
+        - support condition frames (as prefix of x in T-axis)
+    
+    x: (B,C,T,H,W): noisy latent at t-level noise
+    # T = T_c + T_n  when w/o kv_cache, i.e., x is the entire seq (partially noised) till current auto-regre step
+    # T = T_n when w/ kv_cache, i.e., x is the noisy chunk to be denoised
+
+    model_kwargs: {
+        y,
+        mask,
+
+        # only for w/o kv-cache:
+        mask_channel, # (B,1,T,1,1) ideally remove this, extra-channels for temp_attn, 1 for cond, 0 for noisy 
+        x_cond,      #  (B,C,T_c,H,W) i.e., condition frames, manually assign them at each denoise timestep
+
+        # for infer w/ kv-cache, 
+        # the above args will be built and processed inside the model's kv-cache mechanism
+    } 
+    '''
+    do_cfg = True if cfg_scale > 1.0 else False
+    T = x.shape[2]
+    
+    if "x_cond" in model_kwargs:
+        x_cond = model_kwargs.pop("x_cond") # (T,) the batch has a same condition_len
+        T_c = x_cond.shape[2]
+        x[:,:,:T_c,:,:] = x_cond
+        t_input = timestep[:,None].repeat(1,T) # (B,T)
+        t_input[:, :T_c] = 0
+    else:
+        # when kv-cache is enabled, we do not need x_cond since it's info is inside the cached kv
+        t_input = timestep # (B,)
+
+    if do_cfg:
+        x = torch.cat([x]*2, dim=0)
+        t_input = torch.cat([t_input]*2, dim=0)
+    
+    model_out = model.forward(x, t_input, **model_kwargs) # (B, C*2, T, H, W)
+
+    # split prediction of mean and variance
+    out_channel = model_out.shape[1] //2
+    noise_pred, var_pred = model_out[:, :out_channel], model_out[:, out_channel:] # (B, C, T, H, W)
+
+    # perform guidance (only for mean), we do not perform guidance for variance 
+    if do_cfg:
+        noise_pred_uncond, noise_pred_text = noise_pred.chunk(2,dim=0)
+        noise_pred = noise_pred_uncond + cfg_scale * (noise_pred_text - noise_pred_uncond) # (B, C, T, H, W)
+        _,var_pred = var_pred.chunk(2,dim=0) # (B, C, T, H, W)
+
+    model_out = torch.cat([noise_pred,var_pred],dim=1) # (B, C*2, T, H, W)
+    return model_out
+
 
 @SCHEDULERS.register_module("clean_prefix_iddpm")
 class CleanPrefixIDDPM(IDDPM):
@@ -324,6 +414,7 @@ class CleanPrefixIDDPM(IDDPM):
         use_predicted_first_img = False,
         clean_prefix=True,
         clean_prefix_set_t0 = True,
+        max_condition_len = None,
         txt_guidance_scale = 6.0,
         img_guidance_scale = 1.0,
         device = torch.device("cuda"),
@@ -388,6 +479,7 @@ class CleanPrefixIDDPM(IDDPM):
         # 2. get auto-regression steps
         first_k_gievn = first_img_latents.shape[2]
         assert first_k_gievn < num_frames
+        # assert (num_frames - first_k_gievn) % window_size == 0
         num_gen = num_frames - first_k_gievn
 
         window_sizes = []
@@ -645,6 +737,7 @@ def forward_with_cfg2(
         if cls_free_guidance == "both":
             noisy_z_backup = z.clone() # ?? here we use  t-level noise, But in ConsistI2V,  they use T-level noise (for both training and inference)
             # TODO
+            assert False
         # set clean_prefix
         z[:,:,:predict_start_id,:,:] = z_predicted
     

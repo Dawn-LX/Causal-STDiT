@@ -15,12 +15,8 @@ import torchvision
 
 from mmengine.config import Config
 
-
 from colossalai.utils import get_current_device, set_seed
-
-
-
-from opensora.datasets import prepare_dataloader,save_sample
+from opensora.datasets import save_sample
 from opensora.datasets import video_transforms
 
 from opensora.registry import DATASETS, MODELS, SCHEDULERS, build_module
@@ -30,6 +26,7 @@ from opensora.utils.misc import (
     to_torch_dtype,
     load_jsonl
 )
+from opensora.utils.video_gen import validation_visualize
 from opensora.utils.debug_utils import envs
 
 
@@ -83,8 +80,7 @@ def build_validate_examples(examples_or_path,sample_cfgs,print_fn):
 
 @torch.no_grad()
 def main(cfg):
-
-    # ======================================================
+     # ======================================================
     # 2. runtime variables & colossalai launch
     # ======================================================
     assert torch.cuda.is_available(), "Training currently requires at least one GPU."
@@ -133,7 +129,7 @@ def main(cfg):
     
     vae = build_module(cfg.vae, MODELS)
     
-    input_size = (cfg.sample_cfgs.num_frames, cfg.sample_cfgs.width, cfg.sample_cfgs.height)
+    input_size = (1, cfg.sample_cfgs.width, cfg.sample_cfgs.height)
     latent_size = vae.get_latent_size(input_size)
     assert os.path.exists(cfg.ckpt_path)
     cfg.model.from_pretrained = cfg.ckpt_path
@@ -153,65 +149,20 @@ def main(cfg):
     vae = vae.to(device, dtype)
     model = model.to(device, dtype)
     model.eval()
+    vae.eval()
     
     assert vae.patch_size[0] == 1, "TODO: consider temporal patchify"
     
     val_examples = cfg.get("examples",None)
     val_examples = val_examples if val_examples is not None else cfg.examples_json 
     val_examples = build_validate_examples(val_examples,cfg.sample_cfgs,print_fn=logger.info)
-
+    global_step = cfg.ckpt_path.split("global_step")[-1]
+    try:
+        global_step = int(global_step)
+    except:
+        assert False, f"global_step={global_step}"
     
-    val_scheduler = build_module(cfg.val_scheduler,SCHEDULERS)
-    
-    sample_func = val_scheduler.sample_with_kv_cache if cfg.enable_kv_cache else val_scheduler.sample
-    save_dir = os.path.join(exp_dir,"val_samples")
-    os.makedirs(save_dir,exist_ok=True)
-    
-    for idx,example in enumerate(val_examples):
-        current_seed = example.seed
-        if current_seed == "random":
-            current_seed = int(str(datetime.now().timestamp()).split('.')[-1][:4])
-        set_seed(current_seed) # TODO 要用generator seet seed 才能每个 example 由自己的seed 唯一确定，否则只是设置了起始seed，与example list的顺序有关
-
-        if (first_image := example.first_image) is not None:
-            first_image = first_image.to(device=device,dtype=dtype) # (1,3,h,w)
-            first_img_latents = vae.encode(first_image.unsqueeze(2)) # vae accept shape (B,C,T,H,W), here B=1,T=1
-        else:
-            first_img_latents = None
-        
-        input_size = (example.num_frames, example.height, example.width)
-        latent_size = vae.get_latent_size(input_size)
-        sample = sample_func(
-            model,
-            text_encoder,
-            z_size=(vae.out_channels, *latent_size),
-            window_size=example.auto_regre_chunk_len,
-            prompts=[example.prompt],
-            first_img_latents=first_img_latents, # (B,C,1,H,W)
-            use_predicted_first_img = False,
-            txt_guidance_scale = example.txt_guidance_scale,
-            img_guidance_scale = example.img_guidance_scale,
-
-            clean_prefix = cfg.clean_prefix,
-            clean_prefix_set_t0 = cfg.clean_prefix_set_t0,
-            kv_cache_dequeue = cfg.kv_cache_dequeue,
-            kv_cache_max_seqlen = cfg.kv_cache_max_seqlen,
-            device = device
-        ) # (1, C, T, H, W)
-        if cfg.enable_kv_cache:
-            model.empty_kv_cache()
-        
-        sample = vae.decode(sample.to(dtype=dtype))[0] # (C, T, H, W)
-
-        video_name = f"idx{idx}_seed{current_seed}.mp4"
-        save_path = os.path.join(save_dir,video_name)
-        save_sample(sample.clone(),fps=8,save_path=save_path)
-    
-
-    gc.collect()
-    torch.cuda.empty_cache()
-
-
+    validation_visualize(model,vae,text_encoder,val_examples,cfg,exp_dir,writer=None,global_step=global_step)
 
 def merge_args(cfg,train_cfg,args):
     cfg.update(dict(

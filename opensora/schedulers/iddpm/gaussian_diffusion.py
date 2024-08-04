@@ -19,6 +19,7 @@ from einops import rearrange
 
 from .diffusion_utils import discretized_gaussian_log_likelihood, normal_kl
 
+# def build_progressive_noise(progressive_alpha, (bsz, *z_size), start_noise)
 def build_progressive_noise(alpha,noise):
     # noise (bsz,c,f,h,w)
     if alpha > 0:

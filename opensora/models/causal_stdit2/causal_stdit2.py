@@ -121,7 +121,7 @@ class CausalSTDiT2Block(nn.Module):
         enable_sequence_parallelism=False,
         spatial_attn_enhance = None,
         t_win_size : int = 0,
-        is_causal: bool = True, # this is deprecated, we always set is_causal=True
+        is_causal: bool = True, # set it to False for ablation
         with_cross_attn = True,
     ):
         super().__init__()
@@ -170,7 +170,7 @@ class CausalSTDiT2Block(nn.Module):
             num_heads=num_heads,
             qkv_bias=True,
             enable_flash_attn=self.enable_flashattn,
-            is_causal = True
+            is_causal = self.is_causal
         )
 
         if self.spatial_attn_enhance is not None:
@@ -187,7 +187,7 @@ class CausalSTDiT2Block(nn.Module):
                 num_heads = num_heads,
                 qkv_bias=True,
                 enable_flash_attn=self.enable_flashattn,
-                is_causal = True
+                is_causal =  self.is_causal
             )
         
         self.temp_extra_in_channels = temp_extra_in_channels
@@ -548,6 +548,7 @@ class CausalSTDiT2(nn.Module):
                 for i in range(self.depth)
             ]
         )
+        self.temp_extra_in_channels = temp_extra_in_channels
         self.temp_extra_in_all_block = temp_extra_in_all_block
         
         self.spatial_attn_enhance = spatial_attn_enhance
@@ -653,6 +654,10 @@ class CausalSTDiT2(nn.Module):
             '''
             num_temporal = x.shape[2]
             assert self.patch_size[0] == 1, "TODO, consdier temporal patchify for auto-regre infer"
+            if self._kv_cache_registered:
+                # add this so that we donot call `forward_kv_cache` outside the model
+                # i.e., always call model.forward, so that we can keep use scheduler's sample func without modification
+                return self.forward_kv_cache(x,timestep,y,mask=mask)
 
         device = self.x_embedder.proj.weight.device
         dtype = self.x_embedder.proj.weight.dtype
@@ -898,16 +903,17 @@ class CausalSTDiT2(nn.Module):
         
         assert y is not None
         y = self.y_embedder(y, self.training)  # [B, 1, N_token, C]
+        B,_,N_token,C = y.shape
         if mask is not None:
             if mask.shape[0] != y.shape[0]: # this happens when using cls_free_guidance
                 mask = mask.repeat(y.shape[0] // mask.shape[0], 1)
 
             mask = mask.squeeze(1).squeeze(1)
-            y = y.squeeze(1).masked_select(mask.unsqueeze(-1) != 0).view(1, -1, x.shape[-1])
+            y = y.squeeze(1).masked_select(mask.unsqueeze(-1) != 0).view(1, -1, C)
             y_lens = mask.sum(dim=1).tolist()
         else:
             y_lens = [y.shape[2]] * y.shape[0]
-            y = y.squeeze(1).view(1, -1, x.shape[-1])  # (B, 1, N_token, C) --> (1, B*N_token, C)
+            y = y.squeeze(1).view(1, -1, C)  # (B, 1, N_token, C) --> (1, B*N_token, C)
         
         return y,y_lens
 
@@ -976,7 +982,7 @@ class CausalSTDiT2(nn.Module):
         
     
     @torch.no_grad()
-    def forward_kv_cache(self,x,timestep,y,mask,start_id):
+    def forward_kv_cache(self,x,timestep,y,mask,start_id=None):
         assert not self.training
         # assert not self.enable_sequence_parallelism
         # NOTE `self.enable_sequence_parallelism` can be `True`, 
@@ -1015,7 +1021,9 @@ class CausalSTDiT2(nn.Module):
         cached_len = self.cache_indicator.sum().item()
         assert cached_len > 0 , "call `write_latents_to_cache` first"
         assert cached_kv_t is not None,  "call `write_latents_to_cache` first"
-        assert start_id == cached_len, f"start_id={start_id},cached_len={cached_len} " # start_id is used in old-version code, remove this ideally
+        if start_id is not None:
+            # start_id is used in old-version code, remove this ideally
+            assert start_id == cached_len, f"start_id={start_id},cached_len={cached_len} " 
         
         for i, block in enumerate(self.blocks):
             block:CausalSTDiT2Block
@@ -1067,15 +1075,6 @@ class CausalSTDiT2(nn.Module):
         )
         return x
 
-    def unpatchify_old(self, x):
-        c = self.out_channels
-        t, h, w = [self.input_size[i] // self.patch_size[i] for i in range(3)]
-        pt, ph, pw = self.patch_size
-
-        x = x.reshape(shape=(x.shape[0], t, h, w, pt, ph, pw, c))
-        x = rearrange(x, "n t h w r p q c -> n c t r h p w q")
-        imgs = x.reshape(shape=(x.shape[0], c, t * pt, h * ph, w * pw))
-        return imgs
 
     def get_spatial_pos_embed(self, grid_size=None):
         if grid_size is None:

@@ -13,7 +13,7 @@ sample_cfgs = dict(
     width = 256,
     height = 256,
     auto_regre_chunk_len = 8,
-    auto_regre_steps = 7,
+    auto_regre_steps = 3,
     seed = "random"
 )
 
@@ -29,6 +29,13 @@ max_condion_frames = 25
 # infer:
 
 examples = [
+    dict(
+        prompt =  None,
+        first_image =  f"{_VAL_DATA_ROOT}/07U1fSrk9oI/07U1fSrk9oI_1/07U1fSrk9oI_frames_00000046.jpg",
+
+        # the following configs will over-write those in `sample_cfgs`:
+        auto_regre_steps=3,
+    ),
     dict(
         prompt =  None,
         first_image =  f"{_VAL_DATA_ROOT}/07U1fSrk9oI/07U1fSrk9oI_1/07U1fSrk9oI_frames_00000046.jpg",
