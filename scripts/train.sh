@@ -42,7 +42,10 @@ torchrun \
     configs/baselines/full_attn_fixed_tpe.py \
     9686 0
 
-    
+    # causla attn fixed tpe
+    bash /home/gkf/project/CausalSTDiT/scripts/train.sh \
+    configs/baselines/exp2_causal_attn_fixed_tpe.py \
+    9686 0
 
 
 configs/causal_stdit/train_demo_65x256x256.py

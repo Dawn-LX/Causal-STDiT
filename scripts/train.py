@@ -45,6 +45,7 @@ from opensora.utils.misc import (
 )
 from opensora.utils.train_utils import update_ema, PrefixLenSampler
 from opensora.utils.debug_utils import envs
+from opensora.utils.video_gen import validation_visualize
 
 def main(cfg):
     # ======================================================
@@ -468,85 +469,7 @@ def build_validate_examples(examples_or_path,sample_cfgs,print_fn):
     
     return examples_
 
-@torch.no_grad()
-def validation_visualize(model,vae,text_encoder,val_examples,val_cfgs,exp_dir,writer,global_step):
-    gc.collect()
-    torch.cuda.empty_cache()
 
-    model.eval()
-    vae.eval()
-
-    device = get_current_device()
-    dtype = to_torch_dtype(val_cfgs.dtype)
-    assert vae.patch_size[0] == 1, "TODO: consider temporal patchify"
-    
-    save_dir = os.path.join(exp_dir,"val_samples",f"{global_step}")
-    os.makedirs(save_dir,exist_ok=True)
-
-    val_scheduler = build_module(val_cfgs.scheduler,SCHEDULERS)
-    enable_kv_cache = val_cfgs.get("enable_kv_cache",True)
-    kv_cache_dequeue = val_cfgs.get("kv_cache_dequeue",True)
-    kv_cache_max_seqlen = val_cfgs.get("kv_cache_max_seqlen",None)
-    sample_func = val_scheduler.sample_with_kv_cache if enable_kv_cache else val_scheduler.sample
-    
-    for idx,example in enumerate(val_examples):
-        current_seed = example.seed
-        if current_seed == "random":
-            current_seed = int(str(datetime.now().timestamp()).split('.')[-1][:4])
-        set_seed(current_seed) # TODO 要用generator seet seed 才能每个 example 由自己的seed 唯一确定，否则只是设置了起始seed，与example list的顺序有关
-
-        if (first_image := example.first_image) is not None:
-            first_image = first_image.to(device=device,dtype=dtype) # (1,3,h,w)
-            first_img_latents = vae.encode(first_image.unsqueeze(2)) # vae accept shape (B,C,T,H,W), here B=1,T=1
-        else:
-            first_img_latents = None
-        
-        input_size = (example.num_frames, example.height, example.width)
-        latent_size = vae.get_latent_size(input_size)
-        sample = sample_func(
-            model,
-            text_encoder,
-            z_size=(vae.out_channels, *latent_size),
-            window_size=example.auto_regre_chunk_len,
-            prompts=[example.prompt],
-            first_img_latents=first_img_latents, # (B,C,1,H,W)
-            use_predicted_first_img = False,
-            txt_guidance_scale = example.txt_guidance_scale,
-            img_guidance_scale = example.img_guidance_scale,
-
-            clean_prefix = val_cfgs.clean_prefix,
-            clean_prefix_set_t0 = val_cfgs.clean_prefix_set_t0,
-            kv_cache_dequeue = kv_cache_dequeue,
-            kv_cache_max_seqlen = kv_cache_max_seqlen,
-            device = device
-        ) # (1, C, T, H, W)
-        sample = vae.decode(sample.to(dtype=dtype))[0] # (C, T, H, W)
-
-        video_name = f"idx{idx}_seed{current_seed}.mp4"
-        save_path = os.path.join(save_dir,video_name)
-        save_sample(sample.clone(),fps=8,save_path=save_path)
-
-        if writer is not None:
-            low, high = (-1,1)
-            sample.clamp_(min=low, max=high)
-            sample.sub_(low).div_(max(high - low, 1e-5)) # -1 ~ 1 --> 0 ~ 1
-            sample = sample.clamp_(0,1).float().cpu()
-            sample = sample.unsqueeze(0).permute(0,2,1,3,4) # BCTHW --> BTCHW
-
-            writer.add_video(
-                f"validation-{idx}",
-                sample,
-                global_step = global_step,
-                fps=8,
-                walltime=None
-            )
-
-    # if enable_kv_cache:
-    #     model.empty_kv_cache()
-    
-    gc.collect()
-    torch.cuda.empty_cache()
-    model.train()
 
 def reweight_loss_mask(loss_mask,const_len):
     # loss_maskL (b,c,f,h,w)

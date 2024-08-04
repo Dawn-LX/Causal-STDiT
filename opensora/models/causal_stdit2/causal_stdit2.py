@@ -655,7 +655,7 @@ class CausalSTDiT2(nn.Module):
             num_temporal = x.shape[2]
             assert self.patch_size[0] == 1, "TODO, consdier temporal patchify for auto-regre infer"
             if self._kv_cache_registered:
-                # add this so that we donot call `forward_kv_cache` outside the model
+                # add this, so that we donot call `forward_kv_cache` outside the model
                 # i.e., always call model.forward, so that we can keep use scheduler's sample func without modification
                 return self.forward_kv_cache(x,timestep,y,mask=mask)
 

@@ -34,14 +34,15 @@ examples = [
         first_image =  f"{_VAL_DATA_ROOT}/07U1fSrk9oI/07U1fSrk9oI_1/07U1fSrk9oI_frames_00000046.jpg",
 
         # the following configs will over-write those in `sample_cfgs`:
-        auto_regre_steps=3,
-    ),
-    dict(
-        prompt =  None,
-        first_image =  f"{_VAL_DATA_ROOT}/07U1fSrk9oI/07U1fSrk9oI_1/07U1fSrk9oI_frames_00000046.jpg",
-
-        # the following configs will over-write those in `sample_cfgs`:
-        auto_regre_steps=10,
-    ),
-    
+        auto_regre_steps=4,
+    )
 ]
+
+for _ar_steps in range(5,30):
+    _tmp0 = examples[0].copy()
+    _tmp0.update(dict(auto_regre_steps=_ar_steps))
+    examples.extend([_tmp0])
+
+'''# correct samples:
+working_dirSampleOutput/exp1_full_attn_fix_tpe/val_samples/10000/idx0_seed423.mp4
+'''

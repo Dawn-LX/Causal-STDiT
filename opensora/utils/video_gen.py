@@ -10,9 +10,7 @@ from colossalai.utils import get_current_device,set_seed
 from diffusers.schedulers import LCMScheduler
 from opensora.datasets import save_sample
 from opensora.registry import SCHEDULERS, build_module
-
 from opensora.utils.misc import to_torch_dtype
-
 
 from .train_utils import build_progressive_noise
 
@@ -79,7 +77,9 @@ def validation_visualize(model,vae,text_encoder,val_examples,val_cfgs,exp_dir,wr
         ) # (1, C, T, H, W)
         fps = num_gen_frames / time_used
         print(f"num_gen_frames={num_gen_frames}, time_used={time_used:.2f}, fps={fps:.2f}")
+        vae.micro_batch_size = 16
         sample = vae.decode(samples.to(dtype=dtype))[0] # (C, T, H, W)
+        vae.micro_batch_size = None
 
         video_name = f"idx{idx}_seed{current_seed}.mp4"
         save_path = os.path.join(save_dir,video_name)
@@ -257,6 +257,27 @@ def autoregressive_sample(
             # this happens when (max_condion_frames-first_k_given) % chunk_len !=0, 
             # e.g., max_tpe_len=33, cond: [1,8,9,17,25], chunk_len=8, but we set max_condion_frames=27
         
+        if model.relative_tpe_mode is None:
+            assert max_condion_frames + denoise_len == model.temporal_max_len 
+        
+        if not model.is_causal: 
+            # TODO ideally remove this, 
+            # and find a better way to run baseline's auto-regression in both training & inference
+            '''NOTE
+            For bidirectional attention, the chunk to denoise will be affected by the noise at the end of seq
+            e.g., z_cond: [0,1,...,8], denoise_chunk: [9,..,16], noise :[17,...,33]
+            each time len(z_input) should exactly equals to model.temporal_max_len
+
+            another NOTE
+            is_causal & fixed tpe 的时候， 应该也要padding noise ？ 不必， fixed tpe的时候， 应该要求 z_input 的长度不超过 max_tpe_len， 但是可以更短
+            那么， is_causal & fixed tpe 可以用kv-cache 推理吗？
+            '''
+            if z_input.shape[2] < model.temporal_max_len:
+                noise_pad_len = model.temporal_max_len - z_input.shape[2]
+                _b,_c,_t,_h,_w = final_size
+                _noise = torch.randn(size=(_b,_c,noise_pad_len,_h,_w),**device_dtype)
+                z_input = torch.cat([z_input,_noise],dim=2)
+
         model_kwargs.update({"x_cond":z_cond})
         if model.temp_extra_in_channels > 0: # ideally remove this, the model is aware of clean-prefix using timestep emb
             mask_channel = torch.zeros_like(z_input[:,:1,:,:1,:1]) # (B,1,T,1,1)
@@ -273,8 +294,12 @@ def autoregressive_sample(
             model_kwargs = model_kwargs,
             progress_bar = verbose
         ) # (B, C,T_c+T_n,H,W)
-        assert samples.shape[2] == cond_len + denoise_len
-        samples = samples[:,:,cond_len:,:,:]
+        if not model.is_causal:
+            # samples.shape == (B, C, T, H, W); T is fixed (T== model.temporal_max_len) for each auto-regre step
+            pass
+        else:
+            assert samples.shape[2] == cond_len + denoise_len
+        samples = samples[:,:,cond_len:cond_len+denoise_len,:,:]
 
         z_predicted = torch.cat([z_predicted,samples],dim=2) # (B,C, T_accu + T_n, H, W)
 
