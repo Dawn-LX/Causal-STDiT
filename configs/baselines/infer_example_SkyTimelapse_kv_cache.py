@@ -14,14 +14,16 @@ sample_cfgs = dict(
     height = 256,
     auto_regre_chunk_len = 8,
     auto_regre_steps = 7,
-    seed = "random"
+    seed = 555
 )
 
-enable_kv_cache = False
+# '''set them in configs/baselines/exps_list.py
+max_condion_frames = 25
+enable_kv_cache = True
 if enable_kv_cache:
     kv_cache_dequeue = True
-    kv_cache_max_seqlen = 25
-max_condion_frames = 33
+    kv_cache_max_seqlen = max_condion_frames
+# '''
 
 # training:
 # max_seqlen=33, cond: [1,9,17,25]

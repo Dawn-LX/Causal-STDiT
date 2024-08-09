@@ -32,7 +32,7 @@ torchrun \
 # train skytimelapse
 
     bash scripts/train.sh \
-    configs/causal_stdit/train_SkyTimelapse_33x256x256_without_text_cond.py \
+    configs/causal_stdit/train_SkyTimelapse_33x256x256_TPE33.py \
     9686 0
 
 # train baseline:
@@ -45,6 +45,11 @@ torchrun \
     # causla attn fixed tpe
     bash /home/gkf/project/CausalSTDiT/scripts/train.sh \
     configs/baselines/exp2_causal_attn_fixed_tpe.py \
+    9686 0
+
+    # full attn cyclic tpe
+    bash /home/gkf/project/CausalSTDiT/scripts/train.sh \
+    configs/baselines/exp3_full_attn_cyclic_tpe64.py \
     9686 0
 
 

@@ -88,7 +88,8 @@ def main(cfg):
 
     # 2.1. colossalai init distributed training
     # we set a very large timeout to avoid some processes exit early
-    dist.init_process_group(backend="nccl", timeout=timedelta(hours=24))
+    if not dist.is_initialized():
+        dist.init_process_group(backend="nccl", timeout=timedelta(hours=24))
     torch.cuda.set_device(dist.get_rank() % torch.cuda.device_count())
     set_seed(1024)
     device = get_current_device()
@@ -195,12 +196,15 @@ def merge_args(cfg,train_cfg,args):
 
     return cfg
 
+def get_exps_info():
+    pass
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--config",type=str, default="./configs/default.py",help="training config")
-    parser.add_argument("--train_config",type=str, default="./configs/default.py",help="training config")
-    parser.add_argument("--ckpt_path",type=str, default="/path/to/ckpt",help="training config")
-    parser.add_argument("--exp_dir",type=str, default="/data/CausalSTDiT_working_dir/debug")
+    parser.add_argument("--train_config",type=str, default=None)
+    parser.add_argument("--ckpt_path",type=str, default=None)
+    parser.add_argument("--exp_dir",type=str, default=None)
     parser.add_argument("--verbose", action='store_true')
     args = parser.parse_args()
 
@@ -209,3 +213,24 @@ if __name__ == "__main__":
     configs = merge_args(configs,train_configs,args)
 
     main(configs)
+
+    # from copy import deepcopy
+    # exp_list = Config.fromfile("/home/gkf/project/CausalSTDiT/configs/baselines/exps_list.py").exps_list
+    # for exp_info in exp_list:
+    #     configs_i = deepcopy(configs)
+    #     for k,v in exp_info.items():
+    #         print(k,v)
+        
+    #     args.train_config = exp_info.pop("train_config")
+    #     args.exp_dir = exp_info.pop("exp_dir")
+    #     args.ckpt_path = exp_info.pop("ckpt_path")
+    #     configs_i.update(exp_info)
+    #     train_configs = Config.fromfile(args.train_config)
+    #     configs_i = merge_args(configs_i,train_configs,args)
+    #     print("-="*80)
+    #     print(f"ckpt_path {args.ckpt_path}")
+    #     print(f"exp_dir {args.exp_dir}")
+    #     print("-="*80)
+    #     main(configs_i)
+
+    

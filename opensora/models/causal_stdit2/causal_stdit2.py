@@ -1,4 +1,5 @@
 import numpy as np
+import random
 import torch
 import torch.distributed as dist
 import torch.nn as nn
@@ -262,7 +263,7 @@ class CausalSTDiT2Block(nn.Module):
                 assert (prev_L := int(sae_mode.split('_')[-1])) >=1
                 prefix_len = mask_channel.sum(dim=[1,2,3,4]) # (b,1,f,1,1) --> (b,)
                 prefix_len = prefix_len.type(torch.long)
-                assert torch.all(prefix_len >= 1)
+                assert torch.all(prefix_len >= 1), f"prefix_len={prefix_len}"
                 prev_prefix = []
                 for i in range(prev_L):
                     _i = prefix_len - 1 - i
@@ -578,11 +579,80 @@ class CausalSTDiT2(nn.Module):
         self._kv_cache_registered = False
         self.kv_cache_dequeue = True
 
-    def get_relative_tpe(self,num_temporal):
+    def get_relative_tpe(self,chunk_len,chunk_start_idx=None,with_kv_cache=False):
+        mode = self.relative_tpe_mode
+        max_tpe_len = self.pos_embed_temporal.shape[1] # i.e., self.temporal_max_len
+        assert chunk_len <= max_tpe_len
+        '''
+        (full-attn,causal-attn) fixed tpe w/o kv-cache
+        (full-attn,causal-attn) cyclic tpe w/o kv-cache
+        causal-attn fixed tpe w/ kv-cache
+        causal-attn cyclic tpe w/ kv-cache
+
+        for w/o kv-cache or self.training:
+            chunk_len = cond_len + denoise_len
+        
+        for w/o kv-cache (inference)
+            chunk_len = denoise_len, cond_len = len(cached_kv)
+        '''
+        
+        if mode is None: # fixed (absolute) tpe
+            if self.training:
+                assert chunk_start_idx is None or chunk_start_idx == 0
+                tpe = self.pos_embed_temporal[:,:chunk_len,:]
+                # `chunk_len` can be < `max_tpe_len`
+            else:
+                if not with_kv_cache:
+                    assert chunk_len <= max_tpe_len
+                    tpe = self.pos_embed_temporal[:,:chunk_len,:]
+                    # chunk_start_idx can be > 0 when condition_frame starts dequeue
+                    # but for fixed tpe, we do not need `chunk_start_idx`
+                else:
+                    T_accu = chunk_start_idx + chunk_len
+                    tpe = self.pos_embed_temporal[:,:T_accu,:]
+                    # T_accu can be 1,9,17,...,49, 
+                    # and max_tpe_len maybe, e.g., max_tpe_len=33
+                    tpe = tpe[:,-chunk_len:,:]
+                '''
+                we can remove the ablve if-else for w/ & w/o kv-cache and use the following code:
+                
+                T_accu = chunk_start_idx + chunk_len # for w/o kv-cache, chunk_start_idx=0 by default
+                tpe = self.pos_embed_temporal[:,:T_accu,:]
+                tpe = tpe[:,-chunk_len:,:] # for w/o kv-cache, this line is useless
+
+                but to make the code easy-reading, we use the ablve if-else
+                '''
+
+        elif mode == "cyclic":
+            if self.training:
+                assert chunk_start_idx is None or chunk_start_idx == 0
+                tpe_start = random.randint(0,max_tpe_len-1)
+            else:
+                tpe_start = chunk_start_idx
+            
+            tpe_ids = [i % max_tpe_len for i in range(tpe_start,tpe_start+chunk_len)]
+            # print(tpe_ids, max_tpe_len, self.pos_embed_temporal)
+            tpe = self.pos_embed_temporal[:,tpe_ids,:]
+        else:
+            raise NotImplementedError(f"rel_tpe_mode={mode} is not implemented")
+
+        assert tpe.shape[1] == chunk_len, f"tpe.shape={tpe.shape},chunk_len={chunk_len}"
+
+        return tpe
+
+        
+    def get_relative_tpe0(self,num_temporal):
         seq_length = num_temporal
         max_length = self.temporal_max_len
         mode = self.relative_tpe_mode
         device = self.pos_embed_temporal.device
+
+        # temporal_index_condition = [i % temporal_max_len for i in range(temporal_start,temporal_start+T_c)]
+        # temporal_index_target = [i % temporal_max_len for i in range(temporal_start+T_c,temporal_start+T_c+T)]
+
+        # tpe_condition = ""
+        # tpe_target = ""
+
 
         if mode == "offset":
             if self.training:
@@ -614,13 +684,14 @@ class CausalSTDiT2(nn.Module):
         else:
             raise NotImplementedError(f"rel_tpe_mode={mode} is not implemented")
         
+        # print(self.relative_tpe_mode,rel_tpe.shape,self.pos_embed_temporal.shape)
         return rel_tpe
     
     def _check_input_shape(self,x):
         b,c,t,h,w = x.shape
         assert all(i==j for i,j in zip(x.shape[2:],self.input_size)), f"x.shape=={x.shape} != input_size=={self.input_size}"
 
-    def forward(self, x, timestep, y, mask=None, mask_channel=None):
+    def forward(self, x, timestep, y, mask=None, mask_channel=None, x_temporal_start=None):
         """
         Forward pass of STDiT.
         Args:
@@ -694,8 +765,15 @@ class CausalSTDiT2(nn.Module):
         # blocks
         for i, block in enumerate(self.blocks):
             if i == 0:
-                tpe = self.get_relative_tpe(num_temporal)
+                if self.relative_tpe_mode is not None:
+                    assert x_temporal_start is not None
+                tpe = self.get_relative_tpe(
+                    chunk_len= num_temporal,
+                    chunk_start_idx = x_temporal_start, # only used for cyclic tpe
+                    with_kv_cache=False
+                )
                 if self.enable_sequence_parallelism:
+                    assert False, "TODO"
                     tpe = torch.chunk(tpe, sp_size, dim=1)[self.sp_rank].contiguous()
             else:
                 tpe = None
@@ -924,7 +1002,7 @@ class CausalSTDiT2(nn.Module):
         # build timestep embedding with all t0's embedding
         # build mask_channel with all ones
         '''
-        assert self.relative_tpe_mode in ["offset","cyclic"], "# noqa for relative tpe mode == sample"
+        assert self.relative_tpe_mode in ["offset","cyclic",None], "# noqa for relative tpe mode == sample"
         device = self.x_embedder.proj.weight.device
         dtype = self.x_embedder.proj.weight.dtype
         
@@ -957,8 +1035,11 @@ class CausalSTDiT2(nn.Module):
         for i, block in enumerate(self.blocks):
             block:CausalSTDiT2Block
             if i == 0:
-                tpe = self.get_relative_tpe(cached_len+num_temporal)
-                tpe = tpe[:,cached_len:cached_len+num_temporal,:]
+                tpe = self.get_relative_tpe(
+                    chunk_len=num_temporal,
+                    chunk_start_idx=cached_len,
+                    with_kv_cache=True
+                )
                 mask_channel_input = mask_channel
             else:
                 tpe = None
@@ -1028,8 +1109,11 @@ class CausalSTDiT2(nn.Module):
         for i, block in enumerate(self.blocks):
             block:CausalSTDiT2Block
             if i == 0:
-                tpe = self.get_relative_tpe(cached_len+num_temporal)
-                tpe = tpe[:,cached_len:cached_len+num_temporal,:]
+                tpe = self.get_relative_tpe(
+                    chunk_len=num_temporal,
+                    chunk_start_idx=cached_len,
+                    with_kv_cache=True
+                )
                 mask_channel_input = mask_channel
             else:
                 tpe = None

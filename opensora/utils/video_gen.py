@@ -229,7 +229,7 @@ def autoregressive_sample(
         predicted_len = z_predicted.shape[2]
         denoise_len = chunk_len
         init_noise_chunk = init_noise[:,:,predicted_len:predicted_len+denoise_len,:,:]
-        if progressive_alpha>0: 
+        if progressive_alpha > 0: 
             # TODO verify this, check the video gen result is correct
             last_cond = z_predicted[:,:,-1:,:,:]
             tT_bsz = int(scheduler.num_timesteps -1)
@@ -259,25 +259,30 @@ def autoregressive_sample(
         
         if model.relative_tpe_mode is None:
             assert max_condion_frames + denoise_len == model.temporal_max_len 
-        
-        if not model.is_causal: 
-            # TODO ideally remove this, 
+        else:
+            z_input_temporal_start = z_predicted.shape[2] - z_cond.shape[2]
+            model_kwargs.update({"x_temporal_start":z_input_temporal_start})
+
+        if not model.is_causal: # TODO ideally remove this, 
             # and find a better way to run baseline's auto-regression in both training & inference
+            # 应该直接训练的时候就用不同长度的数据，不要在末尾padding， 比如 9, 17, 25, 33， 每个batch 里面是等长的就好了
             '''NOTE
             For bidirectional attention, the chunk to denoise will be affected by the noise at the end of seq
             e.g., z_cond: [0,1,...,8], denoise_chunk: [9,..,16], noise :[17,...,33]
             each time len(z_input) should exactly equals to model.temporal_max_len
 
-            another NOTE
-            is_causal & fixed tpe 的时候， 应该也要padding noise ？ 不必， fixed tpe的时候， 应该要求 z_input 的长度不超过 max_tpe_len， 但是可以更短
-            那么， is_causal & fixed tpe 可以用kv-cache 推理吗？
             '''
-            if z_input.shape[2] < model.temporal_max_len:
-                noise_pad_len = model.temporal_max_len - z_input.shape[2]
+            num_training_frames = 33
+            print(" NOTE: num_training_frames = 33 is hard-coded ", "-="*100)
+            if model.relative_tpe_mode is None:
+                assert num_training_frames==model.temporal_max_len 
+            if z_input.shape[2] < num_training_frames:
+                noise_pad_len = num_training_frames - z_input.shape[2]
+                print(f" >>> use noise padding: z_len = {z_input.shape[2]} noise_pad_len={noise_pad_len}")
                 _b,_c,_t,_h,_w = final_size
                 _noise = torch.randn(size=(_b,_c,noise_pad_len,_h,_w),**device_dtype)
                 z_input = torch.cat([z_input,_noise],dim=2)
-
+        
         model_kwargs.update({"x_cond":z_cond})
         if model.temp_extra_in_channels > 0: # ideally remove this, the model is aware of clean-prefix using timestep emb
             mask_channel = torch.zeros_like(z_input[:,:1,:,:1,:1]) # (B,1,T,1,1)

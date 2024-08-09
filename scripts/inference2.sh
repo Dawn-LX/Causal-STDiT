@@ -49,14 +49,127 @@ parser.add_argument("--exp_dir",type=str, default="/data/CausalSTDiT_working_dir
     working_dirSampleOutput/33x256x256ArSize8pp3_14k_v2 \
     9986 0
 
-### SkyTimelapse full attn fix tpe baseline
+### SkyTimelapse ablations
 
+    # full-attn fixed tpe ckpt-10k
     bash /home/gkf/project/CausalSTDiT/scripts/inference2.sh \
     /home/gkf/project/CausalSTDiT/configs/baselines/infer_exp1.py \
     /data/CausalSTDiT_working_dir/CausalSTDiT2-XL2_BaselineFullAttnFixedTpe_33x256x256ArSize8pp3/training_config_backup.json2024-08-03T21-46-38.json \
     /data/CausalSTDiT_working_dir/CausalSTDiT2-XL2_BaselineFullAttnFixedTpe_33x256x256ArSize8pp3/epoch1-global_step10000 \
-    working_dirSampleOutput/exp1_full_attn_fix_tpe \
+    working_dirSampleOutput/ablations/FullAttnFixTpe_maxCondLen25 \
     9988 0
 
+    # causal attn cyclic tpe ckpt-10k
+    bash /home/gkf/project/CausalSTDiT/scripts/inference2.sh \
+    configs/causal_stdit/infer_example_SkyTimelapse.py \
+    /data/CausalSTDiT_working_dir/CausalSTDiT2-XL2_33x256x256ArSize8pp3_timelapse/training_config_backup.json2024-08-01T16-33-58.json \
+    /data/CausalSTDiT_working_dir/CausalSTDiT2-XL2_33x256x256ArSize8pp3_timelapse/epoch1-global_step10000 \
+    working_dirSampleOutput/ablations/CausalAttnCyclicTpe_maxKVcache25 \
+    9986 0
 
+    # causal attn cyclic tpe ckpt-14k
+    bash /home/gkf/project/CausalSTDiT/scripts/inference2.sh \
+    configs/causal_stdit/infer_example_SkyTimelapse.py \
+    /data/CausalSTDiT_working_dir/CausalSTDiT2-XL2_33x256x256ArSize8pp3_timelapse/training_config_backup.json2024-08-01T16-33-58.json \
+    /data/CausalSTDiT_working_dir/CausalSTDiT2-XL2_33x256x256ArSize8pp3_timelapse/epoch1-global_step14000 \
+    working_dirSampleOutput/ablations/CausalAttnCyclicTpe_maxKVcache25_14k \
+    9986 0
+
+#################################
+
+    # causal-attn cyclic-tpe
+    /data/CausalSTDiT_working_dir/CausalSTDiT2-XL2_33x256x256ArSize8pp3_timelapse/training_config_backup.json2024-08-01T16-33-58.json
+    /data/CausalSTDiT_working_dir/CausalSTDiT2-XL2_33x256x256ArSize8pp3_timelapse/epoch1-global_step13000
+    /data/CausalSTDiT_working_dir/CausalSTDiT2-XL2_33x256x256ArSize8pp3_timelapse/epoch1-global_step14000
+
+    # causal-attn fixed tpe
+    bash /home/gkf/project/CausalSTDiT/scripts/inference2.sh \
+    configs/baselines/infer_example_SkyTimelapse.py \
+    /data/CausalSTDiT_working_dir/CausalSTDiT2-XL2_exp2_BaselineCausalAttnFixedTpe_33x256x256ArSize8pp3/training_config_backup.json2024-08-04T21-43-51.json \
+    /data/CausalSTDiT_working_dir/CausalSTDiT2-XL2_exp2_BaselineCausalAttnFixedTpe_33x256x256ArSize8pp3/epoch1-global_step13000 \
+    working_dirSampleOutput/CausalFixed_maxKVcache33_13k \
+    9993 0
+
+    # full-attn fixed tpe
+    /data/CausalSTDiT_working_dir/CausalSTDiT2-XL2_BaselineFullAttnFixedTpe_33x256x256ArSize8pp3/epoch1-global_step10000
+    /data/CausalSTDiT_working_dir/CausalSTDiT2-XL2_BaselineFullAttnFixedTpe_33x256x256ArSize8pp3/training_config_backup.json2024-08-03T21-46-38.json
+
+    # full-attn cyclic tpe
+    bash /home/gkf/project/CausalSTDiT/scripts/inference2.sh \
+    configs/causal_stdit/infer_example_SkyTimelapse.py \
+    /data/CausalSTDiT_working_dir/CausalSTDiT2-XL2_exp3_BaselineFullAttnCyclicTpe_33x256x256ArSize8pp3/training_config_backup.json \
+    /data/CausalSTDiT_working_dir/CausalSTDiT2-XL2_exp3_BaselineFullAttnCyclicTpe_33x256x256ArSize8pp3/epoch1-global_step13000 \
+    working_dirSampleOutput/exp3_full_attn_cyclic_tpe64_ckpt13k_MaxCondLen33 \
+    9786 0
+
+    bash /home/gkf/project/CausalSTDiT/scripts/inference2.sh \
+    configs/baselines/infer_example_SkyTimelapse.py \
+    TODO TODO TODO \
+    9187 0
+
+    bash /home/gkf/project/CausalSTDiT/scripts/inference2.sh \
+    _backup/infer_example_SkyTimelapse0.py \
+    TODO TODO TODO \
+    9986 0
+
+########### debug reorganized tpe
+
+    full-attn fixed tpe w/o kv-cache
+    full-attn cyclic tpe w/o kv-cache
+    
+    causal-attn fixed tpe w/o kv-cache
+    causal-attn cyclic tpe w/o kv-cache
+    causal-attn fixed tpe w/ kv-cache
+    causal-attn cyclic tpe w/ kv-cache
+
+    ### full-attn fixed tpe w/o kv-cache
+        bash /home/gkf/project/CausalSTDiT/scripts/inference2.sh \
+        configs/baselines/infer_example_SkyTimelapse_NoKVCache.py \
+        /data/CausalSTDiT_working_dir/CausalSTDiT2-XL2_BaselineFullAttnFixedTpe_33x256x256ArSize8pp3/training_config_backup.json2024-08-03T21-46-38.json \
+        /data/CausalSTDiT_working_dir/CausalSTDiT2-XL2_BaselineFullAttnFixedTpe_33x256x256ArSize8pp3/epoch1-global_step10000 \
+        working_dirSampleOutput/_debugReorganizedTpeMaxCondLen25/FullFixed_wo_kv_cache \
+        9981 0
+
+    ### full-attn cyclic tpe w/o kv-cache
+        bash /home/gkf/project/CausalSTDiT/scripts/inference2.sh \
+        configs/baselines/infer_example_SkyTimelapse_NoKVCache.py \
+        /data/CausalSTDiT_working_dir/CausalSTDiT2-XL2_exp3_BaselineFullAttnCyclicTpe_33x256x256ArSize8pp3/training_config_backup.json \
+        /data/CausalSTDiT_working_dir/CausalSTDiT2-XL2_exp3_BaselineFullAttnCyclicTpe_33x256x256ArSize8pp3/epoch1-global_step13000 \
+        working_dirSampleOutput/_debugReorganizedTpeMaxCondLen25/FullCyclic_wo_kv_cache \
+        9982 0
+    
+    ### causal-attn fixed tpe w/o kv-cache
+        bash /home/gkf/project/CausalSTDiT/scripts/inference2.sh \
+        configs/baselines/infer_example_SkyTimelapse_NoKVCache.py \
+        /data/CausalSTDiT_working_dir/CausalSTDiT2-XL2_exp2_BaselineCausalAttnFixedTpe_33x256x256ArSize8pp3/training_config_backup.json2024-08-04T21-43-51.json \
+        /data/CausalSTDiT_working_dir/CausalSTDiT2-XL2_exp2_BaselineCausalAttnFixedTpe_33x256x256ArSize8pp3/epoch1-global_step13000 \
+        working_dirSampleOutput/_debugReorganizedTpeMaxCondLen25/CausalFixed_wo_kv_cache \
+        9983 0
+
+    ### causal-attn cyclic tpe w/o kv-cache
+        bash /home/gkf/project/CausalSTDiT/scripts/inference2.sh \
+        configs/baselines/infer_example_SkyTimelapse_NoKVCache.py \
+        /data/CausalSTDiT_working_dir/CausalSTDiT2-XL2_33x256x256ArSize8pp3_timelapse/training_config_backup.json2024-08-01T16-33-58.json \
+        /data/CausalSTDiT_working_dir/CausalSTDiT2-XL2_33x256x256ArSize8pp3_timelapse/epoch1-global_step14000 \
+        working_dirSampleOutput/_debugReorganizedTpeMaxCondLen25/CausalCyclic_wo_kv_cache \
+        9984 0
+    
+    ### causal-attn fixed tpe w/ kv-cache
+        bash /home/gkf/project/CausalSTDiT/scripts/inference2.sh \
+        configs/baselines/infer_example_SkyTimelapse_kv_cache.py \
+        /data/CausalSTDiT_working_dir/CausalSTDiT2-XL2_exp2_BaselineCausalAttnFixedTpe_33x256x256ArSize8pp3/training_config_backup.json2024-08-04T21-43-51.json \
+        /data/CausalSTDiT_working_dir/CausalSTDiT2-XL2_exp2_BaselineCausalAttnFixedTpe_33x256x256ArSize8pp3/epoch1-global_step13000 \
+        working_dirSampleOutput/_debugReorganizedTpeMaxCondLen25/CausalFixed_with_kv_cache \
+        9985 0
+
+    ### causal-attn cyclic tpe w/ kv-cache
+        bash /home/gkf/project/CausalSTDiT/scripts/inference2.sh \
+        configs/baselines/infer_example_SkyTimelapse_kv_cache.py \
+        /data/CausalSTDiT_working_dir/CausalSTDiT2-XL2_33x256x256ArSize8pp3_timelapse/training_config_backup.json2024-08-01T16-33-58.json \
+        /data/CausalSTDiT_working_dir/CausalSTDiT2-XL2_33x256x256ArSize8pp3_timelapse/epoch1-global_step14000 \
+        working_dirSampleOutput/_debugReorganizedTpeMaxCondLen25/CausalCyclic_with_kv_cache \
+        9986 0
+    
+
+    
 comment
