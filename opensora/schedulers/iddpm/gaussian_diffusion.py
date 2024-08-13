@@ -470,11 +470,6 @@ class GaussianDiffusion:
             # print(f"<GaussianDiffusion.p_sample>: noise: {noise.shape}")
         assert noise.shape == x.shape # (B,C,T,H,W)
 
-        if envs.DEBUG_KV_CACHE3:
-            kv_cache_tag = envs.KV_CACHE_TAG
-            t_scalar = t.reshape(-1)[0].item()
-            if t_scalar>=99:
-                print(f"<GaussianDiffusion.p_sample>: {kv_cache_tag}, \n >>> t={t}, noise={noise2print[0,0,:,0,0]}, noise.dtype={noise2print.dtype}, {noise2print.shape}")
         # assert False, f'''
         # t={t}, {t.shape} 
         # generator.state={generator.get_state()}

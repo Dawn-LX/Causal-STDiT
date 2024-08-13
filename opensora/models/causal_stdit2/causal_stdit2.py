@@ -237,9 +237,6 @@ class CausalSTDiT2Block(nn.Module):
         else:
             # t: (b, f, c*6); if seq_parrallel, d_t is the local seqlen for each sp_rank
             assert t.ndim == 3
-            if envs.DEBUG_KV_CACHE2 and self._block_idx==0:
-                filename_t = "wo_kv_cache_temb_B_T_C6.pt"
-                torch.save(t,f"{envs.TENSOR_SAVE_DIR}/{filename_t}")
 
             t=t[:,:,None,:].repeat(1,1,S,1) # (b,f,s,6*c)
             t= rearrange(t, 'b f s c -> b (f s) c', b=B,f=T)
@@ -249,41 +246,14 @@ class CausalSTDiT2Block(nn.Module):
             scale_shift_by_t = scale_shift_by_t.chunk(6, dim=2) # (B,N, 1, C)
             shift_msa, scale_msa, gate_msa, shift_mlp, scale_mlp, gate_mlp = (ss.squeeze(2) for ss in scale_shift_by_t) # (B, N ,C)
 
-        x_norm1 = self.norm1(x)
-        if envs.DEBUG_KV_CACHE2 and self._block_idx==0:
-            x2print = rearrange(x_norm1, "B (T S) C -> B T S C",T=T, S=S)
-            x2print2 = x2print[0,:,0,0]
-            print(f"<CausalSTDiT2Block.forward>: after self.norm1 \n >>> x:{x2print2}, {x2print.shape}")
-            filename = "wo_kv_cache_after_norm1_xBTSC.pt"
-            torch.save(x2print,f"{envs.TENSOR_SAVE_DIR}/{filename}")
-        
-        x_m = t2i_modulate(x_norm1, shift_msa, scale_msa) # (B, N, C) x (B, 1, C) -> (B, N, C)
-        if envs.DEBUG_KV_CACHE2 and self._block_idx==0:
-            x2print = rearrange(x_m, "B (T S) C -> B T S C",T=T, S=S)
-            x2print2 = x2print[0,:,0,0]
-            print(f"<CausalSTDiT2Block.forward>: after self.norm1 \n >>> x:{x2print2}, {x2print.shape}")
-            print(f"<CausalSTDiT2Block.forward>: after self.norm1 \n >>> shift_msa:{shift_msa[0,:,0]}, {shift_msa.shape}")
-            print(f"<CausalSTDiT2Block.forward>: after self.norm1 \n >>> shift_msa:{scale_msa[0,:,0]}, {scale_msa.shape}")
-            filename = "wo_kv_cache_after_norm1_scale_shift_xBTSC.pt"
-            torch.save(x2print,f"{envs.TENSOR_SAVE_DIR}/{filename}")
+        x_m = t2i_modulate(self.norm1(x), shift_msa, scale_msa) # (B, N, C) x (B, 1, C) -> (B, N, C)
 
-            filename_shift = "wo_kv_cache_after_norm1_shift_BNC.pt"
-            filename_scale = "wo_kv_cache_after_norm1_scale_BNC.pt"
-            torch.save(shift_msa,f"{envs.TENSOR_SAVE_DIR}/{filename_shift}")
-            torch.save(scale_msa,f"{envs.TENSOR_SAVE_DIR}/{filename_scale}")
 
         ######### spatial branch
         x_s = rearrange(x_m, "B (T S) C -> (B T) S C", T=T, S=S)
         x_s = self.attn(x_s)
         x_s = rearrange(x_s, "(B T) S C -> B (T S) C", T=T, S=S)
         x = x + self.drop_path(gate_msa * x_s)
-        if envs.DEBUG_KV_CACHE2 and self._block_idx==0:
-            x2print = rearrange(x, "B (T S) C -> B T S C",T=T, S=S)
-            x2print2 = x2print[0,:,0,0]
-            print(f"<CausalSTDiT2Block.forward>: after attn \n >>> x:{x2print2}, {x2print.shape}")
-            filename = "wo_kv_cache_after_attn_xBTSC.pt"
-            print(f"{envs.TENSOR_SAVE_DIR}/{filename}")
-            torch.save(x2print,f"{envs.TENSOR_SAVE_DIR}/{filename}")
 
         ######### cross-frame attn spatial branch
         if self.spatial_attn_enhance is not None:
@@ -321,12 +291,6 @@ class CausalSTDiT2Block(nn.Module):
             x_s_ = rearrange(x_s_, "(B T) S C -> B (T S) C", T =T, S = S)
 
             x =  x + self.drop_path(gate_msa * x_s_)
-            if envs.DEBUG_KV_CACHE2 and self._block_idx==0:
-                x2print = rearrange(x, "B (T S) C -> B T S C",T=T, S=S)
-                x2print2 = x2print[0,:,0,0]
-                filename = "wo_kv_cache_after_attnCF_xBTSC.pt"
-                torch.save(x2print,f"{envs.TENSOR_SAVE_DIR}/{filename}")
-                print(f"<CausalSTDiT2Block.forward>: after attn_cf \n >>> x:{x2print2}, {x2print.shape}")
             
             
 
@@ -353,10 +317,6 @@ class CausalSTDiT2Block(nn.Module):
         x_t = self.attn_temp(x_t) # (B S) T C
         x_t = rearrange(x_t, "(B S) T C -> B (T S) C", T=T, S= S)
         x = x + self.drop_path(gate_msa * x_t)
-        if envs.DEBUG_KV_CACHE2 and self._block_idx==0:
-            x2print = rearrange(x, "B (T S) C -> B T S C",T=T, S=S)
-            x2print2 = x2print[0,:,0,100:105]
-            print(f"<CausalSTDiT2Block.forward>: after attn_temp \n >>> x:{x2print2}, {x2print.shape}")
 
         if self.t_win_size > 0:
             # TODO window temporal attn, collect temporal context for temporal attn
@@ -367,37 +327,9 @@ class CausalSTDiT2Block(nn.Module):
             x = x + self.cross_attn(x, y, mask)
 
         # mlp
-        if envs.DEBUG_KV_CACHE2 and self._block_idx==0:
-            x2print = rearrange(x, "B (T S) C -> B T S C",T=T, S=S)
-            x2print2 = x2print[0,:,0,0]
-            print(f"<CausalSTDiT2Block.forward_kv_cache>: before self.norm2 \n >>> x:{x2print2}, {x2print.shape}")
-            torch.save(x2print,f"{envs.TENSOR_SAVE_DIR}/wo_kv_cache_before_norm2_xBTSC.pt")
         
-        x_m = self.norm2(x) 
-        if envs.DEBUG_KV_CACHE2 and self._block_idx==0:
-            x2print = rearrange(x_m, "B (T S) C -> B T S C",T=T, S=S)
-            x2print2 = x2print[0,:,0,0]
-            print(f"<CausalSTDiT2Block.forward_kv_cache>: after self.norm2 \n >>> x:{x2print2}, {x2print.shape}")
-
-            shift_mlp2print = rearrange(shift_mlp, "B (T S) C -> B T S C",T=T, S=S)
-            scale_mlp2print = rearrange(scale_mlp, "B (T S) C -> B T S C",T=T, S=S)
-            shift_mlp2print2 = shift_mlp2print[0,:,0,0]
-            scale_mlp2print2 = scale_mlp2print[0,:,0,0]
-            print(f"self.norm2={self.norm2}")
-            print(f"<CausalSTDiT2Block.forward>: after self.norm2 \n >>> shift_mlp:{shift_mlp2print2}, {shift_mlp2print.shape}")
-            print(f"<CausalSTDiT2Block.forward>: after self.norm2 \n >>> scale_mlp:{scale_mlp2print2}, {scale_mlp2print.shape}")
-        
-        x_m_ = t2i_modulate(x_m, shift_mlp, scale_mlp)
+        x_m_ = t2i_modulate(self.norm2(x), shift_mlp, scale_mlp)
         x = x + self.drop_path(gate_mlp * self.mlp(x_m_))
-        if envs.DEBUG_KV_CACHE2 and self._block_idx==0:
-            x2print = rearrange(x, "B (T S) C -> B T S C",T=T, S=S)
-            x2print2 = x2print[0,:,0,0]
-            print(f"<CausalSTDiT2Block.forward>: after mlp \n >>> x:{x2print2}, {x2print.shape}")
-            print(f"<CausalSTDiT2Block.forward>: after mlp \n >>> gate_mlp:{gate_mlp[0,:,0]}, {gate_mlp.shape}")
-            
-
-            assert not self.with_cross_attn
-        
 
         return x
 
@@ -417,46 +349,12 @@ class CausalSTDiT2Block(nn.Module):
         S = H *  W
         T = N // S # window_size
 
-        if envs.DEBUG_KV_CACHE2 and self._block_idx==0:
-            if cached_kv == (None,None):
-                filename_t = "with_kv_cache_clean_temb_B_C6.pt"
-            else:
-                filename_t = "with_kv_cache_denoise_temb_B_C6.pt"
-            torch.save(t,f"{envs.TENSOR_SAVE_DIR}/{filename_t}")
-            
         shift_msa, scale_msa, gate_msa, shift_mlp, scale_mlp, gate_mlp = (
             self.scale_shift_table[None] + t.reshape(B, 6, -1) # (1, 6, C) + (B, 6, C) --> (B, 6, C)
         ).chunk(6, dim=1) # each one has shape (B, 1, C)
 
-        x_norm1 = self.norm1(x)
-        if envs.DEBUG_KV_CACHE2 and self._block_idx==0:
-            x2print = rearrange(x_norm1, "B (T S) C -> B T S C",T=T, S=S)
-            x2print2 = x2print[0,:,0,0]
-            print(f"<CausalSTDiT2Block.forward>: after self.norm1 \n >>> x:{x2print2}, {x2print.shape}")
-            if cached_kv == (None,None):
-                filename = "with_kv_cache_after_norm1_clean_xBTSC.pt"
-            else:
-                filename = "with_kv_cache_after_norm1_denoise_xBTSC.pt"
-            torch.save(x2print,f"{envs.TENSOR_SAVE_DIR}/{filename}")
+        x_m = t2i_modulate(self.norm1(x), shift_msa, scale_msa) # (B, N, C) x (B, 1, C) -> (B, N, C)
 
-        x_m = t2i_modulate(x_norm1, shift_msa, scale_msa) # (B, N, C) x (B, 1, C) -> (B, N, C)
-        if envs.DEBUG_KV_CACHE2 and self._block_idx==0:
-            x2print = rearrange(x_m, "B (T S) C -> B T S C",T=T, S=S)
-            x2print2 = x2print[0,:,0,0]
-            print(f"<CausalSTDiT2Block.forward>: after self.norm1 \n >>> x:{x2print2}, {x2print.shape}")
-            print(f"<CausalSTDiT2Block.forward>: after self.norm1 \n >>> shift_msa:{shift_msa[0,:,0]}, {shift_msa.shape}")
-            print(f"<CausalSTDiT2Block.forward>: after self.norm1 \n >>> shift_msa:{scale_msa[0,:,0]}, {scale_msa.shape}")
-            if cached_kv == (None,None):
-                filename = "with_kv_cache_after_norm1_scale_shift_clean_xBTSC.pt"
-                filename_shift = "with_kv_cache_after_norm1_clean_shift_B1C.pt"
-                filename_scale = "with_kv_cache_after_norm1_clean_scale_B1C.pt"
-            else:
-                filename = "with_kv_cache_after_norm1_scale_shift_denoise_xBTSC.pt"
-                filename_shift = "with_kv_cache_after_norm1_denoise_shift_B1C.pt"
-                filename_scale = "with_kv_cache_after_norm1_denoise_scale_B1C.pt"
-            torch.save(x2print,f"{envs.TENSOR_SAVE_DIR}/{filename}")
-            torch.save(shift_msa,f"{envs.TENSOR_SAVE_DIR}/{filename_shift}")
-            torch.save(scale_msa,f"{envs.TENSOR_SAVE_DIR}/{filename_scale}")
 
         # =======================================================================
         # spatial branch
@@ -465,15 +363,6 @@ class CausalSTDiT2Block(nn.Module):
         x_s = self.attn(x_s)
         x_s = rearrange(x_s, "(B T) S C -> B (T S) C", T=T, S=S)
         x = x + self.drop_path(gate_msa * x_s)
-        if envs.DEBUG_KV_CACHE2 and self._block_idx==0:
-            x2print = rearrange(x, "B (T S) C -> B T S C",T=T, S=S)
-            x2print2 = x2print[0,:,0,0]
-            print(f"<CausalSTDiT2Block.forward_kv_cache>: after attn \n >>> x:{x2print2}, {x2print.shape}")
-            if cached_kv == (None,None):
-                filename = "with_kv_cache_after_attn_clean_xBTSC.pt"
-            else:
-                filename = "with_kv_cache_after_attn_denoise_xBTSC.pt"
-            torch.save(x2print,f"{envs.TENSOR_SAVE_DIR}/{filename}")
 
         cached_kv_s,cached_kv_t = cached_kv
         if cached_kv_s is not None:
@@ -498,26 +387,7 @@ class CausalSTDiT2Block(nn.Module):
             _debug_T_accu = None if cached_kv_t is None else T_accu
             x_s, spatial_kv = self.attn_cf(x_s,context=cached_kv_s, is_ctx_as_kv=True,return_kv = True,debug_info=("attn_cf_with_kv_cache",_debug_T_accu))
             spatial_kv = rearrange(spatial_kv,"(B T) S C -> B T S C",T=T, S= S)
-            '''
-            NOTE BUG
-            现在这样做 spatial kv-cache 是错误的, 比如 chunk_len=8, T_p = prev_L = 3的情况下：
-            第一个ar-step之后，会write kv-cache for [1-8], 这时候，self.attn_cf 输入的是clean的 [1-8]，
-            然后cached_kv_s 是[0]（即第0帧，auto-regression之前预先写入的第0帧的cache。 这样的话， [1-8] 中的每一帧，会和 repeat T_p 的第0帧交互
-            然后再得到 [1-8]的kv-cache，再取[-T_p:]，即[6,7,8]的kv-cache作为下一个 ar-step的 spatia-kv（用于denoise [9-16]
-            
-            再往后的ar-step，比如, write kv-cache for [9-16]的时候，
-              clean的[9-16]中的每一帧会和 [6,7,8]spatial-concat的帧，做spatial attn的交互， 再写入spatial kv-cache, 然后取[-T_p:] 即[14,15,16],用于下一个ar-step
 
-            注意到，这种做法，与 w/o kv-cache,同时也与training 是不一致的。
-            因为，在训练的时候， 比如denoise [9-16]的时候，用的是T_p的prev帧，即[6,7,8]， 但这里的[6,7,8]仅是本身的spatial-kv而已
-            ，即，没有和第0帧做过spatial attn交互的[6,7,8]。 所以现在这样w/ kv-cache 和 训练是不一致的。 
-            
-            正确的做法是，我们不必设立单独的 spatial-kv cache buffer （即 抛弃 cached_kv_s）, 直接从 cached_kv_t 那里拿过来就好了
-            因为我们这里 cached_kv_t 起始就是包含了所有 clean previous frame 的信息（只要 T_p < max_kv_cache_len，当然这一般都是成立的) 
-
-            因为我们这里和 ConditionNet & TargetNet那个框架不一样，在那里我们直接在ConditionNet后接了两个proj_layer 分别输出spatial kv & temporal kv
-            所以在那个框架中要区分 spatial-kv cache & temporal kv-cache 的buffer，但是这里我们不用，一共就一个模型
-            '''
             
             if self.spatial_attn_enhance == "first_frame":
                 spatial_kv = spatial_kv[:,:1,:,:]  # B 1 S C*2
@@ -534,15 +404,6 @@ class CausalSTDiT2Block(nn.Module):
             x_s = rearrange(x_s,"(B T) S C -> B (T S) C",T=T, S= S)
             x = x + self.drop_path(gate_msa * x_s)
 
-            if envs.DEBUG_KV_CACHE2 and self._block_idx==0:
-                x2print = rearrange(x, "B (T S) C -> B T S C",T=T, S=S)
-                x2print2 = x2print[0,:,0,0]
-                if cached_kv == (None,None):
-                    filename = "with_kv_cache_after_attnCF_clean_xBTSC.pt"
-                else:
-                    filename = "with_kv_cache_after_attnCF_denoise_xBTSC.pt"
-                torch.save(x2print,f"{envs.TENSOR_SAVE_DIR}/{filename}")
-                print(f"<CausalSTDiT2Block.forward_kv_cache>: after attn_cf \n >>> x:{x2print2}, {x2print.shape}")
         
         # =======================================================================
         # temporal branch
@@ -569,10 +430,6 @@ class CausalSTDiT2Block(nn.Module):
         temporal_kv = rearrange(temporal_kv,"(B S) T C -> B T S C", T=T, S=S)
         
         x = x + self.drop_path(gate_msa * x_t)
-        if envs.DEBUG_KV_CACHE2 and self._block_idx==0:
-            x2print = rearrange(x, "B (T S) C -> B T S C",T=T, S=S)
-            x2print2 = x2print[0,:,0,100:105]
-            print(f"<CausalSTDiT2Block.forward_kv_cache>: after attn_temp \n >>> x:{x2print2}, {x2print.shape}")
         
         if return_kv and return_kv_only:
             # for the last block (save the computation of cross-attn)
@@ -588,33 +445,9 @@ class CausalSTDiT2Block(nn.Module):
         
         # mlp
         # x = x + self.drop_path(gate_mlp * self.mlp(t2i_modulate(self.norm2(x), shift_mlp, scale_mlp)))
-        if envs.DEBUG_KV_CACHE2 and self._block_idx==0:
-            x2print = rearrange(x, "B (T S) C -> B T S C",T=T, S=S)
-            x2print2 = x2print[0,:,0,0]
-            print(f"<CausalSTDiT2Block.forward_kv_cache>: before self.norm2 \n >>> x:{x2print2}, {x2print.shape}")
-            if cached_kv == (None,None):
-                filename = "with_kv_cache_before_norm2_clean_xBTSC.pt"
-            else:
-                filename = "with_kv_cache_before_norm2_denoise_xBTSC.pt"
-            torch.save(x2print,f"{envs.TENSOR_SAVE_DIR}/{filename}")
 
-        x_m = self.norm2(x) 
-        if envs.DEBUG_KV_CACHE2 and self._block_idx==0:
-            x2print = rearrange(x_m, "B (T S) C -> B T S C",T=T, S=S)
-            x2print2 = x2print[0,:,0,0]
-            print(f"self.norm2={self.norm2}")
-            print(f"<CausalSTDiT2Block.forward>: after self.norm2 \n >>> x:{x2print2}, {x2print.shape}")
-            print(f"<CausalSTDiT2Block.forward>: after self.norm2 \n >>> shift_mlp:{shift_mlp[0,:,0]}, {shift_mlp.shape}")
-            print(f"<CausalSTDiT2Block.forward>: after self.norm2 \n >>> scale_mlp:{scale_mlp[0,:,0]}, {scale_mlp.shape}")
-
-        x_m_ = t2i_modulate(x_m, shift_mlp, scale_mlp)
+        x_m_ = t2i_modulate(self.norm2(x), shift_mlp, scale_mlp)
         x = x + self.drop_path(gate_mlp * self.mlp(x_m_))
-        if envs.DEBUG_KV_CACHE2 and self._block_idx==0:
-            x2print = rearrange(x, "B (T S) C -> B T S C",T=T, S=S)
-            x2print2 = x2print[0,:,0,0]
-            print(f"<CausalSTDiT2Block.forward_kv_cache>: after mlp \n >>> x:{x2print2}, {x2print.shape}")
-            print(f"<CausalSTDiT2Block.forward_kv_cache>: after mlp \n >>> gate_mlp:{gate_mlp[0,:,0]}, {gate_mlp.shape}")
-            assert not self.with_cross_attn
 
         if return_kv:
             return (
@@ -926,24 +759,12 @@ class CausalSTDiT2(nn.Module):
         # embedding
         x = self.x_embedder(x)  # [B, N, C]  # N = (16/1)*(32/2)*(32/2)
         x = rearrange(x, "B (T S) C -> B T S C", T=num_temporal, S=self.num_spatial)
-        if envs.DEBUG_KV_CACHE2:
-            print(self.x_embedder)
-            x2print = x[0,:,0,0]
-            print(f"<CausalSTDiT2.forward>: \n >>> x:{x2print}, {x.shape}")
 
         x = x + self.pos_embed
-        if envs.DEBUG_KV_CACHE2:
-            x2print = x[0,:,0,0]
-            print(f"<CausalSTDiT2.forward>: after +pos_embd \n >>> x:{x2print}, {x.shape}")
         x = rearrange(x, "B T S C -> B (T S) C")
 
 
         t = self.t_embedder(timestep, dtype=x.dtype)  # [B, C] or [B, T, C]
-        if envs.DEBUG_KV_CACHE2:
-            t2print = t[0,:,:5]
-            print(f"<CausalSTDiT2.forward>: after t_embedder, timestep={timestep} \n >>> t:{t2print}, {t.shape}")
-            filename_t = "wo_kv_cache_temb_BTC.pt"
-            torch.save(t,f"{envs.TENSOR_SAVE_DIR}/{filename_t}")
         t_mlp = self.t_block(t)  # [B, C*6]
         y,y_lens = self.process_text_embeddings_with_mask(y,mask)
 
@@ -969,9 +790,6 @@ class CausalSTDiT2(nn.Module):
                     chunk_start_idx = x_temporal_start, # only used for cyclic tpe
                     with_kv_cache=False
                 )
-                if envs.DEBUG_KV_CACHE3 and timestep.reshape(-1)[-1].item() > 998:
-                    filename = "wo_kv_cache_tpe_ChunkStartIdx{:03d}Len{:03d}_1TC.pt".format(x_temporal_start,num_temporal)
-                    torch.save(tpe,f"{envs.TENSOR_SAVE_DIR}/{filename}")
                 
                 if self.enable_sequence_parallelism:
                     assert False, "TODO"
@@ -979,18 +797,8 @@ class CausalSTDiT2(nn.Module):
             else:
                 tpe = None
 
-            if envs.DEBUG_KV_CACHE2 and i==0:
-                x2print = rearrange(x, "B (T S) C -> B T S C",T=num_temporal, S=self.num_spatial)
-                x2print2 = x2print[0,:,0,0]
-                print(f"<CausalSTDiT2.forward>: before 1st block \n >>> x:{x2print2}, {x2print.shape}")
-                filename = "wo_kv_cache_before_1stBlock_xBTSC.pt"
-                torch.save(x2print,f"{envs.TENSOR_SAVE_DIR}/{filename}")
-
             x = auto_grad_checkpoint(block, x, y, t_mlp, y_lens, tpe, mask_channel)
-            if envs.DEBUG_KV_CACHE2 and i==0:
-                x2print = rearrange(x, "B (T S) C -> B T S C",T=num_temporal, S=self.num_spatial)
-                x2print2 = x2print[0,:,0,0]
-                print(f"<CausalSTDiT2.forward>: after 1st block \n >>> x:{x2print2}, {x2print.shape}")
+            
 
         if self.enable_sequence_parallelism:
             x = gather_forward_split_backward(x, sp_group, dim=1, grad_scale="up")
@@ -1007,11 +815,6 @@ class CausalSTDiT2(nn.Module):
         
         x = self.unpatchify(x,input_size)  # [B, C_out, T, H, W]
         
-        if envs.DEBUG_KV_CACHE3:
-            t_scalar = timestep.reshape(-1)[-1].item()
-            if t_scalar>=990 or t_scalar<=10 :
-                print(f"<CausalSTDiT2.forward>:\n >>> t={t_scalar}, x={x[0,0,:,0,0]}, {x.shape}")
-                # assert False
         x = x.to(torch.float32) # cast to float32 for better accuracy
         return x
 
@@ -1180,11 +983,6 @@ class CausalSTDiT2(nn.Module):
             print(f"cache_ids_to_write: {cache_ids_to_write}")
             print(f"after write_kv_cache, cache_indicator={self.cache_indicator}")
         
-        if envs.DEBUG_KV_CACHE3:
-            accu_cached_len = self.cache_indicator.sum().item()
-            # self.cache_kv # (D, B, L, S, C*2)
-            filename = "with_kv_cache_AccuLen{:2d}_cachedKV_DBLSC.pt".format(accu_cached_len)
-            torch.save(self.cache_kv,f"{envs.TENSOR_SAVE_DIR}/{filename}")
     
     def process_text_embeddings_with_mask(self,y,mask):
         if self.y_embedder is None:
@@ -1228,11 +1026,6 @@ class CausalSTDiT2(nn.Module):
         # embedding
         x = self.x_embedder(x) # (B, N, C)
         x = rearrange(x, "B (T S) C -> B T S C",T=num_temporal,S = self.num_spatial)
-        if envs.DEBUG_KV_CACHE2:
-            print(self.x_embedder)
-            x2print = x[0,:,0,0]
-            print(f"<CausalSTDiT2.write_latents_to_cache>: \n >>> x:{x2print}, {x.shape}")
-
         x = x + self.pos_embed
         x = rearrange(x, "B T S C -> B (T S) C")
 
@@ -1240,11 +1033,6 @@ class CausalSTDiT2(nn.Module):
         
         timestep = timestep[:,None].repeat_interleave(9,dim=1) # (B,) --> (B, T)
         t = self.t_embedder(timestep, dtype=x.dtype)  # [B, T, C]
-        if envs.DEBUG_KV_CACHE2:
-            t2print = t[0,:5]
-            print(f"<CausalSTDiT2.write_latents_to_cache>: after t_embedder, timestep={timestep} \n >>> t:{t2print}, {t.shape}")
-            filename_t = "with_kv_cache_clean_temb_BC.pt"
-            torch.save(t,f"{envs.TENSOR_SAVE_DIR}/{filename_t}")
 
         t_mlp = self.t_block(t)  # [B, T, C*6]
         t_mlp = t_mlp[:,0,:] # [B, C*6]
@@ -1266,9 +1054,6 @@ class CausalSTDiT2(nn.Module):
                     chunk_start_idx=cached_len,
                     with_kv_cache=True
                 )
-                if envs.DEBUG_KV_CACHE3:
-                    filename = "with_kv_cache_tpe_clean_ChunkStartIdx{:03d}_1TC.pt".format(cached_len)
-                    torch.save(tpe,f"{envs.TENSOR_SAVE_DIR}/{filename}")
                         
                         
                 mask_channel_input = mask_channel
@@ -1280,21 +1065,10 @@ class CausalSTDiT2(nn.Module):
             kv_t = None if cached_kv_t is None else cached_kv_t[i]
             cached_kv = (kv_s,kv_t)
 
-            if envs.DEBUG_KV_CACHE2 and i==0:
-                x2print = rearrange(x, "B (T S) C -> B T S C",T=num_temporal, S=self.num_spatial)
-                x2print2 = x2print[0,:,0,0]
-                print(f"<CausalSTDiT2.write_latents_to_cache>: before 1st block \n >>> x:{x2print2}, {x2print.shape}")
-                filename = "with_kv_cache_before_1stBlock_clean_xBTSC.pt"
-                torch.save(x2print,f"{envs.TENSOR_SAVE_DIR}/{filename}")
-
             x, spatial_kv,temporal_kv = block.forward_kv_cache(
                 x, y, t_mlp, y_lens, tpe, mask_channel_input, cached_kv=cached_kv,
                 return_kv=True, return_kv_only = (i == len(self.blocks)-1)
             )
-            if envs.DEBUG_KV_CACHE2 and i==0:
-                x2print = rearrange(x, "B (T S) C -> B T S C",T=num_temporal, S=self.num_spatial)
-                x2print2 = x2print[0,:,0,0]
-                print(f"<CausalSTDiT2.write_latents_to_cache>: after 1st block \n >>> x:{x2print2}, {x2print.shape}")
 
             kv_cache_to_write.append((
                 spatial_kv,     # (B, T_p, S, C*2) 
@@ -1306,8 +1080,6 @@ class CausalSTDiT2(nn.Module):
             spatial_kv = None
         temporal_kv = torch.stack([st_kv[1] for st_kv in  kv_cache_to_write],dim=0) # (depth, B, T, S, C*2)
         self._write_kv_cache(spatial_kv,temporal_kv)
-        if envs.DEBUG_KV_CACHE2:
-            print("-="*40 + " done _write_kv_cache " + "-="*40)
         
     
     @torch.no_grad()
@@ -1334,15 +1106,7 @@ class CausalSTDiT2(nn.Module):
         # embedding
         x = self.x_embedder(x)  # [B, N, C]  # N = (16/1)*(32/2)*(32/2)
         x = rearrange(x, "B (T S) C -> B T S C", T=num_temporal, S=self.num_spatial)
-        if envs.DEBUG_KV_CACHE2:
-            print(self.x_embedder)
-            x2print = x[0,:,0,0]
-            print(f"<CausalSTDiT2.forward_kv_cache>: \n >>> x:{x2print}, {x.shape}")
-
         x = x + self.pos_embed
-        if envs.DEBUG_KV_CACHE2:
-            x2print = x[0,:,0,0]
-            print(f"<CausalSTDiT2.forward_kv_cache>: after +pos_embd \n >>> x:{x2print}, {x.shape}")
         x = rearrange(x, "B T S C -> B (T S) C")
 
         _cached_len = min(self.cache_indicator.sum().item(),len(self.cache_indicator))
@@ -1353,11 +1117,6 @@ class CausalSTDiT2(nn.Module):
         ],dim=1).to(dtype=dtype)
         t = self.t_embedder(timestep, dtype=x.dtype)  # [B, T, C]
         t_clone = t.clone()[:,_cached_len+1,:]
-        if envs.DEBUG_KV_CACHE2:
-            t2print = t[0,:5]
-            print(f"<CausalSTDiT2.forward_kv_cache>: after t_embedder, timestep={timestep} \n >>> t:{t2print}, {t.shape}")
-            filename_t = "with_kv_cache_denoise_temb_BC.pt"
-            torch.save(t,f"{envs.TENSOR_SAVE_DIR}/{filename_t}")
 
         t_mlp = self.t_block(t)  # [B, T, C*6]
         t_mlp = t_mlp[:,_cached_len:,:] # [B, T_n, C*6]
@@ -1385,9 +1144,6 @@ class CausalSTDiT2(nn.Module):
                     chunk_start_idx=cached_len,
                     with_kv_cache=True
                 )
-                if envs.DEBUG_KV_CACHE3 and timestep.reshape(-1)[-1].item() > 998:
-                    filename = "with_kv_cache_tpe_denoise_ChunkStartIdx{:03d}_1TC.pt".format(cached_len)
-                    torch.save(tpe,f"{envs.TENSOR_SAVE_DIR}/{filename}")
 
                 mask_channel_input = mask_channel
             else:
@@ -1397,20 +1153,7 @@ class CausalSTDiT2(nn.Module):
             kv_s = None if cached_kv_s is None else cached_kv_s[i]  # it can be None when spatial_attn_enhance is None
             kv_t = cached_kv_t[i]
             cached_kv_i = (kv_s,kv_t)
-
-            if envs.DEBUG_KV_CACHE2 and i==0:
-                x2print = rearrange(x, "B (T S) C -> B T S C",T=num_temporal, S=self.num_spatial)
-                x2print2 = x2print[0,:,0,0]
-                print(f"<CausalSTDiT2.forward_kv_cache>: before 1st block \n >>> x:{x2print2}, {x2print.shape}")
-
-                filename = "with_kv_cache_before_1stBlock_denoise_xBTSC.pt"
-                torch.save(x2print,f"{envs.TENSOR_SAVE_DIR}/{filename}")
-
             x = block.forward_kv_cache(x, y, t_mlp, y_lens, tpe, mask_channel_input,cached_kv=cached_kv_i, return_kv=False)
-            if envs.DEBUG_KV_CACHE2 and i==0:
-                x2print = rearrange(x, "B (T S) C -> B T S C",T=num_temporal, S=self.num_spatial)
-                x2print2 = x2print[0,:,0,0]
-                print(f"<CausalSTDiT2.forward_kv_cache>: after 1st block \n >>> x:{x2print2}, {x2print.shape}")
 
         
         # final process
@@ -1418,11 +1161,6 @@ class CausalSTDiT2(nn.Module):
         input_size = (num_temporal, self.input_size[1], self.input_size[2])
         x = self.unpatchify(x,input_size)  # [B, C_out, T, H, W]
         
-        if envs.DEBUG_KV_CACHE3:
-            t_scalar = timestep.reshape(-1)[-1].item()
-            if t_scalar>=990 or t_scalar<=10 :
-                print(f"<CausalSTDiT2.forward_kv_cache>:\n >>> t={t_scalar}, x={x[0,0,:,0,0]}, {x.shape}")
-                # assert False
         x = x.to(torch.float32) # cast to float32 for better accuracy
         return x
     

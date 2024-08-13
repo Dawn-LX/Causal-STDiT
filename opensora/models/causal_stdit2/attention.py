@@ -59,10 +59,6 @@ class AttentionWithContext(nn.Module):
         qkv = qkv.view(qkv_shape).permute(qkv_permute_shape)
         q, k, v = qkv.unbind(0)
 
-        if envs.DEBUG_KV_CACHE4:
-            if debug_info is not None:
-                debug_info,T_accu = debug_info
-                if T_accu is None: T_accu = -1
         if context is not None:
 
             N_c = context.shape[1]
@@ -85,25 +81,12 @@ class AttentionWithContext(nn.Module):
                 if debug_info=="attn_cf_with_kv_cache":
                     k = extra_k  # (B,num_heads,N,head_dim) for enable_flash_attn
                     v = extra_v
-                    if envs.DEBUG_KV_CACHE4:
-                        # print(T_accu)
-                        if T_accu >= 9:
-                            print("attn_cf_with_kv_cache")
-                            print(f"T_c={T_accu},k={k[0,0,:,0]},{k.shape}")
-                            assert False
+
             else:
                 qkv = self.qkv(context)
                 qkv_shape = (B, N_c, 3, self.num_heads, self.head_dim)
                 qkv = qkv.view(qkv_shape).permute(qkv_permute_shape)
                 _,k,v = qkv.unbind(0) # overwrite k/v
-                if debug_info=="attn_cf_wo_kv_cache":
-                    if envs.DEBUG_KV_CACHE4:
-                        k:torch.Tensor # (B,num_heads,N,head_dim) for enable_flash_attn
-                        # print(T_accu)
-                        if T_accu > 9:
-                            print("attn_cf_wo_kv_cache")
-                            print(f"T_c+T_n={T_accu},k={k[0,0,:,0]},{k.shape}")
-                            assert False
                         
                         
             
