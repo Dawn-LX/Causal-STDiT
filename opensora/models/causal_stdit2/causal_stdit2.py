@@ -1029,13 +1029,9 @@ class CausalSTDiT2(nn.Module):
         x = x + self.pos_embed
         x = rearrange(x, "B T S C -> B (T S) C")
 
-        # timestep999 = torch.ones()
-        
-        timestep = timestep[:,None].repeat_interleave(9,dim=1) # (B,) --> (B, T)
-        t = self.t_embedder(timestep, dtype=x.dtype)  # [B, T, C]
+        t = self.t_embedder(timestep, dtype=x.dtype)  # [B, C]
+        t_mlp = self.t_block(t)  # [B, C*6]
 
-        t_mlp = self.t_block(t)  # [B, T, C*6]
-        t_mlp = t_mlp[:,0,:] # [B, C*6]
         y,y_lens = self.process_text_embeddings_with_mask(y,mask)
 
 
@@ -1109,18 +1105,9 @@ class CausalSTDiT2(nn.Module):
         x = x + self.pos_embed
         x = rearrange(x, "B T S C -> B (T S) C")
 
-        _cached_len = min(self.cache_indicator.sum().item(),len(self.cache_indicator))
-        _timestep0 = torch.zeros_like(timestep) # (B,)
-        timestep = torch.cat([
-            _timestep0[:,None].repeat_interleave(_cached_len,dim=1), # (B,) --> (B, T_c)
-            timestep[:,None].repeat_interleave(num_temporal,dim=1)  # (B,) --> (B,T_n)
-        ],dim=1).to(dtype=dtype)
-        t = self.t_embedder(timestep, dtype=x.dtype)  # [B, T, C]
-        t_clone = t.clone()[:,_cached_len+1,:]
-
-        t_mlp = self.t_block(t)  # [B, T, C*6]
-        t_mlp = t_mlp[:,_cached_len:,:] # [B, T_n, C*6]
-        t_mlp = t_mlp[:,0,:] # [B, C*6]
+        
+        t = self.t_embedder(timestep, dtype=x.dtype)  # [B, C]
+        t_mlp = self.t_block(t)  # [B, C*6]
 
         y,y_lens = self.process_text_embeddings_with_mask(y,mask)
 
@@ -1157,7 +1144,7 @@ class CausalSTDiT2(nn.Module):
 
         
         # final process
-        x = self.final_layer(x, t_clone,num_temporal=num_temporal)  # [B, N, C=T_p * H_p * W_p * C_out]
+        x = self.final_layer(x, t, num_temporal=num_temporal)  # [B, N, C=T_p * H_p * W_p * C_out]
         input_size = (num_temporal, self.input_size[1], self.input_size[2])
         x = self.unpatchify(x,input_size)  # [B, C_out, T, H, W]
         

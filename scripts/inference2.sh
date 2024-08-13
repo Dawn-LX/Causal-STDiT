@@ -15,9 +15,7 @@ NUM_GPUS=$(echo $CUDA_VISIBLE_DEVICES | awk -F',' '{print NF}')
 
 export IS_DEBUG=1
 export DEBUG_WITHOUT_LOAD_PRETRAINED=0
-export DEBUG_KV_CACHE2=0
-export DEBUG_KV_CACHE3=0
-export DEBUG_KV_CACHE4=1
+export DEBUG_KV_CACHE2=1
 # export TENSOR_SAVE_DIR="/home/gkf/project/CausalSTDiT/working_dirSampleOutput/_debug_KVcache_wo_CfAttn"
 export TENSOR_SAVE_DIR="/home/gkf/project/CausalSTDiT/working_dirSampleOutput/_debug_KVcache"
 export KV_CACHE_TAG=${EXP_DIR:${#EXP_DIR}-15}

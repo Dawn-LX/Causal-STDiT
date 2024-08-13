@@ -449,36 +449,38 @@ class GaussianDiffusion:
             denoised_fn=denoised_fn,
             model_kwargs=model_kwargs,
         )
-        # noise = torch.randn_like(x)
-        generator = torch.Generator(device=x.device)
-        generator.manual_seed(t_scalar:=t.reshape(-1)[0].item())
-        B,C,T,H,W = x.shape
-        if "x_cond" in model_kwargs:
-            # x_cond : (B,C,T_c,H,W)
-            x_cond =  model_kwargs["x_cond"]
-            T_c = x_cond.shape[2]
-            assert T_c < T , f"x_cond: {x_cond.shape}; x:{x.shape}"
-            T_n = T - T_c  # denoise_len
-            noise = torch.randn(size=(B,C,T_n,H,W),device=x.device,dtype=x.dtype,generator=generator)
-            noise2print = noise.clone()
-            noise = torch.cat([torch.zeros_like(x_cond),noise],dim=2)
-        else:
-            T_n = T
-            noise = torch.randn(size=(B,C,T,H,W),device=x.device,dtype=x.dtype,generator=generator)
-            # noise = torch.randn(size=(B,C,T,H,W),device=x.device,dtype=x.dtype)
-            noise2print = noise.clone()
-            # print(f"<GaussianDiffusion.p_sample>: noise: {noise.shape}")
-        assert noise.shape == x.shape # (B,C,T,H,W)
+        noise = torch.randn_like(x)
 
-        # assert False, f'''
-        # t={t}, {t.shape} 
-        # generator.state={generator.get_state()}
-        # noise={noise[0,0,:,0,0]}
-        # model_kwargs.keys()= {model_kwargs.keys()}
-        # model_kwargs.keys(): dict_keys(['y', 'mask', 'x_cond', 'mask_channel'])      
-        # 用 x_cond 得到 cond_len ， 然后 上面的 noise randn 只用 denoise_chunk 的部分
-        # 这样所有产生随机noise的地方，都应该和 w/ kv-cache 一致，然后debug
-        # '''
+        if envs.DEBUG_KV_CACHE2:
+            generator = torch.Generator(device=x.device)
+            generator.manual_seed(t_scalar:=t.reshape(-1)[0].item())
+            B,C,T,H,W = x.shape
+            if "x_cond" in model_kwargs:
+                # x_cond : (B,C,T_c,H,W)
+                x_cond =  model_kwargs["x_cond"]
+                T_c = x_cond.shape[2]
+                assert T_c < T , f"x_cond: {x_cond.shape}; x:{x.shape}"
+                T_n = T - T_c  # denoise_len
+                noise = torch.randn(size=(B,C,T_n,H,W),device=x.device,dtype=x.dtype,generator=generator)
+                noise2print = noise.clone()
+                noise = torch.cat([torch.zeros_like(x_cond),noise],dim=2)
+            else:
+                T_n = T
+                noise = torch.randn(size=(B,C,T,H,W),device=x.device,dtype=x.dtype,generator=generator)
+                # noise = torch.randn(size=(B,C,T,H,W),device=x.device,dtype=x.dtype)
+                noise2print = noise.clone()
+                # print(f"<GaussianDiffusion.p_sample>: noise: {noise.shape}")
+            assert noise.shape == x.shape # (B,C,T,H,W)
+
+            # assert False, f'''
+            # t={t}, {t.shape} 
+            # generator.state={generator.get_state()}
+            # noise={noise[0,0,:,0,0]}
+            # model_kwargs.keys()= {model_kwargs.keys()}
+            # model_kwargs.keys(): dict_keys(['y', 'mask', 'x_cond', 'mask_channel'])      
+            # 用 x_cond 得到 cond_len ， 然后 上面的 noise randn 只用 denoise_chunk 的部分
+            # 这样所有产生随机noise的地方，都应该和 w/ kv-cache 一致，然后debug
+            # '''
 
         nonzero_mask = (t != 0).float().view(-1, *([1] * (len(x.shape) - 1)))  # no noise when t == 0
         if cond_fn is not None:
