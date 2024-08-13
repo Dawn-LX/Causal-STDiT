@@ -19,7 +19,7 @@ def run_attn(enable_flashattn: bool):
         N,
         qkv_bias=True,
         rope=rope.rotate_queries_or_keys,
-        enable_flashattn=enable_flashattn,
+        enable_flash_attn=enable_flashattn,
     ).to(device=get_current_device(), dtype=torch.bfloat16)
     x = torch.randn(B, S, H, device=get_current_device(), dtype=torch.bfloat16).requires_grad_()
     y = attn(x)
@@ -32,3 +32,9 @@ if __name__ == "__main__":
     run_attn(True)
     print("No flashattn")
     run_attn(False)
+    '''
+    export CODE_ROOT="/home/gkf/project/CausalSTDiT"
+    export 
+    
+    PYTHONPATH=$PYTHONPATH:"/home/gkf/project/CausalSTDiT" python tests/test_attn.py
+    '''

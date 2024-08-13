@@ -176,7 +176,7 @@ class Attention(nn.Module):
         q, k, v = qkv.unbind(0)
         # WARNING: this may be a bug
         if self.rope:
-            q = self.rotary_emb(q)
+            q = self.rotary_emb(q) # (B, #heads, N, #dim)
             k = self.rotary_emb(k)
         q, k = self.q_norm(q), self.k_norm(k)
 

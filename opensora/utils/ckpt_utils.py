@@ -271,6 +271,10 @@ def load_checkpoint(model, ckpt_path, save_as_pt=False):
         print(f"Missing keys: {missing_keys}")
         print(f"Unexpected keys: {unexpected_keys}")
     elif os.path.isdir(ckpt_path):
+        _pt_path = os.path.join(ckpt_path, "model_ckpt.pt")
+        if os.path.isfile(_pt_path):
+            print(f"find .pt file, load from {_pt_path}")
+            return load_checkpoint(model,_pt_path)
         load_from_sharded_state_dict(model, ckpt_path)
         if save_as_pt:
             save_path = os.path.join(ckpt_path, "model_ckpt.pt")

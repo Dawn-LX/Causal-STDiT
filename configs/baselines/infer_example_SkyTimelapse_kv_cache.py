@@ -24,7 +24,9 @@ if enable_kv_cache:
     kv_cache_dequeue = True
     kv_cache_max_seqlen = max_condion_frames
 # '''
-
+dtype = "fp16"
+enable_flashattn = True
+# cross_frame_attn= None
 # training:
 # max_seqlen=33, cond: [1,9,17,25]
 

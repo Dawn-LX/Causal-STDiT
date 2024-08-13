@@ -84,7 +84,7 @@ def main(cfg):
     # 2. runtime variables & colossalai launch
     # ======================================================
     assert torch.cuda.is_available(), "Training currently requires at least one GPU."
-    assert cfg.dtype in ["fp16", "bf16"], f"Unknown mixed precision {cfg.dtype}"
+    # assert cfg.dtype in ["fp16", "bf16"], f"Unknown mixed precision {cfg.dtype}"
 
     # 2.1. colossalai init distributed training
     # we set a very large timeout to avoid some processes exit early
@@ -184,6 +184,7 @@ def merge_args(cfg,train_cfg,args):
         kv_cache_dequeue = True,
         kv_cache_max_seqlen = 65,
     )
+    
 
     for k, v in default_cfgs.items():
         if k not in cfg:
@@ -193,6 +194,16 @@ def merge_args(cfg,train_cfg,args):
         if v is not None:
             cfg[k] = v
     
+    # update model config at inference time:
+    # e.g., train w/ seq_parallel and inference w/o seq_parallel
+    # e.g., enable_sequence_parallelism, enable_flashattn, etc.
+    from copy import deepcopy
+    model_kwargs = deepcopy(cfg.model)
+    for k, v in cfg.items():
+        for k_model in cfg.model.keys():
+            if k==k_model:
+                model_kwargs.update({k_model:v})
+    cfg.update(model=model_kwargs)
 
     return cfg
 

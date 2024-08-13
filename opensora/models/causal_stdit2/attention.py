@@ -10,6 +10,7 @@ from opensora.acceleration.communications import all_to_all, split_forward_gathe
 from opensora.acceleration.parallel_states import get_sequence_parallel_group
 
 from opensora.models.layers.blocks import LlamaRMSNorm
+from opensora.utils.debug_utils import envs
 
 class AttentionWithContext(nn.Module):
     def __init__(
@@ -41,7 +42,7 @@ class AttentionWithContext(nn.Module):
 
         self.is_causal = is_causal
 
-    def forward(self, x: torch.Tensor, context: torch.Tensor = None, is_ctx_as_kv = False, return_kv=False) -> torch.Tensor:
+    def forward(self, x: torch.Tensor, context: torch.Tensor = None, is_ctx_as_kv = False, return_kv=False,debug_info=None) -> torch.Tensor:
         B, N, C = x.shape
         # flash attn is not memory efficient for small sequences, this is empirical
         # enable_flash_attn = self.enable_flash_attn and (N > B) # TODO
@@ -58,6 +59,10 @@ class AttentionWithContext(nn.Module):
         qkv = qkv.view(qkv_shape).permute(qkv_permute_shape)
         q, k, v = qkv.unbind(0)
 
+        if envs.DEBUG_KV_CACHE4:
+            if debug_info is not None:
+                debug_info,T_accu = debug_info
+                if T_accu is None: T_accu = -1
         if context is not None:
 
             N_c = context.shape[1]
@@ -77,11 +82,30 @@ class AttentionWithContext(nn.Module):
                     for spatial_attn:  N_c + N = T_c*S + S
                     NOTE the order matters for causal temporal_attn, we must let extra_k before k in `torch.cat`
                 '''
+                if debug_info=="attn_cf_with_kv_cache":
+                    k = extra_k  # (B,num_heads,N,head_dim) for enable_flash_attn
+                    v = extra_v
+                    if envs.DEBUG_KV_CACHE4:
+                        # print(T_accu)
+                        if T_accu >= 9:
+                            print("attn_cf_with_kv_cache")
+                            print(f"T_c={T_accu},k={k[0,0,:,0]},{k.shape}")
+                            assert False
             else:
                 qkv = self.qkv(context)
                 qkv_shape = (B, N_c, 3, self.num_heads, self.head_dim)
                 qkv = qkv.view(qkv_shape).permute(qkv_permute_shape)
                 _,k,v = qkv.unbind(0) # overwrite k/v
+                if debug_info=="attn_cf_wo_kv_cache":
+                    if envs.DEBUG_KV_CACHE4:
+                        k:torch.Tensor # (B,num_heads,N,head_dim) for enable_flash_attn
+                        # print(T_accu)
+                        if T_accu > 9:
+                            print("attn_cf_wo_kv_cache")
+                            print(f"T_c+T_n={T_accu},k={k[0,0,:,0]},{k.shape}")
+                            assert False
+                        
+                        
             
         q, k = self.q_norm(q), self.k_norm(k)
 
@@ -98,11 +122,28 @@ class AttentionWithContext(nn.Module):
             )
         else:
             dtype = q.dtype
-            q = q * self.scale
+            # k: (B,num_heads,N_cache + N,head_dim)
+            q = q * self.scale # (B,num_heads,N,head_dim)
             attn = q @ k.transpose(-2, -1)  # translate attn to float32
             attn = attn.to(torch.float32)
             
-            assert not self.is_causal, "TODO: manually set a causal attn mask"
+            # assert not self.is_causal, "TODO: manually set a causal attn mask"
+            if self.is_causal:
+                len_k = k.shape[2]
+                len_q = q.shape[2]
+                assert len_k >= len_q, "TODO:"
+                attn_mask = torch.tril(torch.ones(size=(len_q,len_q)),diagonal=0).type(torch.bool) # 1 for keep, 0 for masked out
+                if len_k > len_q:
+                    attn_mask = torch.cat([
+                        torch.ones(size=(len_q,len_k-len_q),dtype=torch.bool),
+                        attn_mask
+                    ],dim=1)
+                
+                attn_bias = torch.zeros(size=(len_q,len_k))
+                attn_bias.masked_fill_(attn_mask.logical_not(),float("-inf"))
+                attn_bias = attn_bias.to(device=attn.device,dtype=attn.dtype)
+
+                attn = attn + attn_bias
 
             attn = attn.softmax(dim=-1)
             attn = attn.to(dtype)  # cast back attn to original dtype

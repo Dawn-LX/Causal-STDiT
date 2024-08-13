@@ -13,6 +13,7 @@ from opensora.registry import SCHEDULERS, build_module
 from opensora.utils.misc import to_torch_dtype
 
 from .train_utils import build_progressive_noise
+from .debug_utils import envs
 
 @torch.no_grad()
 def validation_visualize(model,vae,text_encoder,val_examples,val_cfgs,exp_dir,writer,global_step):
@@ -49,7 +50,6 @@ def validation_visualize(model,vae,text_encoder,val_examples,val_cfgs,exp_dir,wr
         current_seed = example.seed
         if current_seed == "random":
             current_seed = int(str(datetime.now().timestamp()).split('.')[-1][:4])
-        set_seed(current_seed) # TODO 要用generator seet seed 才能每个 example 由自己的seed 唯一确定，否则只是设置了起始seed，与example list的顺序有关
 
         if (first_image := example.first_image) is not None:
             first_image = first_image.to(device=device,dtype=dtype) # (1,3,h,w)
@@ -71,7 +71,7 @@ def validation_visualize(model,vae,text_encoder,val_examples,val_cfgs,exp_dir,wr
             prompts = [example.prompt],
             cond_frame_latents=cond_frame_latents, # (B,C,1,H,W)
             ar_steps = example.auto_regre_steps,
-            device = device,
+            seed = current_seed,
             verbose=True,
             **additional_kwargs
         ) # (1, C, T, H, W)
@@ -121,15 +121,16 @@ def autoregressive_sample_kv_cache(
 ):
     
     # cond_frame_latents: (B, C, T_c, H, W)
-
+    # NOTE: cond_frame_latents output from vae with bf16, here we cast all tensor to fp32 for better accuracy
+    # i.e., make sure bf16 is used only inside vae & STDiT model, outside which we all use fp32
+    device_dtype = dict(device=cond_frame_latents.device,dtype=torch.float32)
     bsz = len(prompts)
     c,chunk_len,h,w = z_size
     total_len  = cond_frame_latents.shape[2] + chunk_len * ar_steps
     final_size = (bsz,c,total_len,h,w)
-
-    z_predicted = cond_frame_latents.clone()  # (B,C, T_c, H, W)
-    device_dtype = dict(device=z_predicted.device,dtype=z_predicted.dtype)
     do_cls_free_guidance = scheduler.cfg_scale > 1.0
+
+    z_predicted = cond_frame_latents.clone().to(**device_dtype)  # (B,C, T_c, H, W)
     
     time_start = time.time()
     num_given_frames = z_predicted.shape[2]
@@ -153,7 +154,12 @@ def autoregressive_sample_kv_cache(
         **model_kwargs
     )
 
-    init_noise = torch.randn(final_size,**device_dtype)
+    generator = torch.Generator(z_predicted.device)
+    if seed:=kwargs.get("seed",None):
+        generator.manual_seed(seed)
+        if envs.DEBUG_KV_CACHE3: print(f"<autoregressive_sample_kv_cache>: w/ kv-cache: generator.seed={seed}")
+
+    init_noise = torch.randn(final_size,generator=generator,**device_dtype)
     progressive_alpha = kwargs.get("progressive_alpha",-1)
     for ar_step in tqdm(range(ar_steps),disable=not verbose):
         predicted_len = z_predicted.shape[2]
@@ -167,6 +173,9 @@ def autoregressive_sample_kv_cache(
             start_noise = scheduler.q_sample(last_cond,tT_bsz, noise = torch.randn_like(last_cond))
             init_noise_chunk = build_progressive_noise(progressive_alpha, (bsz, *z_size), start_noise)
         
+        if envs.DEBUG_KV_CACHE4:
+            noise_chunk = init_noise_chunk
+            print(f"<autoregressive_sample_kv_cache>: ar_step={ar_step}: noise_chunk:{noise_chunk[0,0,:,0,0]}, {noise_chunk.shape}")
         samples = scheduler.sample_v2(
             model,
             z= init_noise_chunk,
@@ -176,15 +185,22 @@ def autoregressive_sample_kv_cache(
             progress_bar = verbose
         ) # (B, C,T_n,H,W)
         
+        if envs.DEBUG_KV_CACHE4:
+            print(f"<autoregressive_sample>: ar_step={ar_step}: samples={samples[0,0,:,0,0]}, {samples.shape}")
+            filename = f"with_kv_cache_denoised_chunk_arstep{ar_step:02d}_BCTHW.pt"
+            torch.save(samples,f"{envs.TENSOR_SAVE_DIR}/{filename}")
+
         model.write_latents_to_cache(
             torch.cat([samples]*2,dim=0) if do_cls_free_guidance else samples,
             **model_kwargs
         )
-
         z_predicted = torch.cat([z_predicted,samples],dim=2) # (B,C, T_accu + T_n, H, W)
 
         if verbose: 
             print(f"ar_step={ar_step}: given {predicted_len} frames,  denoise:{samples.shape} --> get:{z_predicted.shape}")
+
+        # if envs.DEBUG_KV_CACHE3:
+        #     assert ar_step < 0
 
     time_used = time.time() - time_start
     num_gen_frames = z_predicted.shape[2] - num_given_frames
@@ -200,15 +216,16 @@ def autoregressive_sample(
     **kwargs
 ):
     # cond_frame_latents: (B, C, T_c, H, W)
-
+    # NOTE: cond_frame_latents output from vae with bf16, here we cast all tensor to fp32 for better accuracy
+    # i.e., make sure bf16 is used only inside vae & STDiT model, outside which we all use fp32
+    device_dtype = dict(device=cond_frame_latents.device,dtype=torch.float32)
     bsz = len(prompts)
     c,chunk_len,h,w = z_size
     total_len  = cond_frame_latents.shape[2] + chunk_len * ar_steps
     final_size = (bsz,c,total_len,h,w)
-
-    z_predicted = cond_frame_latents.clone()  # (B,C, T_c, H, W)
-    device_dtype = dict(device=z_predicted.device,dtype=z_predicted.dtype)
     do_cls_free_guidance = scheduler.cfg_scale > 1.0
+
+    z_predicted = cond_frame_latents.clone().to(**device_dtype)  # (B,C, T_c, H, W)
     
     time_start = time.time()
     num_given_frames = z_predicted.shape[2]
@@ -222,8 +239,12 @@ def autoregressive_sample(
     if do_cls_free_guidance:
         model_kwargs["y"] = torch.cat([y_null,model_kwargs["y"]], dim=0)
 
+    generator = torch.Generator(z_predicted.device)
+    if seed:=kwargs.get("seed",None):
+        generator.manual_seed(seed)
+        if envs.DEBUG_KV_CACHE3: print(f"<autoregressive_sample>: w/o kv-cache: generator.seed={seed}")
     
-    init_noise = torch.randn(final_size,**device_dtype)
+    init_noise = torch.randn(final_size,generator=generator,**device_dtype)
     progressive_alpha = kwargs.get("progressive_alpha",-1)
     for ar_step in tqdm(range(ar_steps),disable=not verbose):
         predicted_len = z_predicted.shape[2]
@@ -259,9 +280,9 @@ def autoregressive_sample(
         
         if model.relative_tpe_mode is None:
             assert max_condion_frames + denoise_len == model.temporal_max_len 
-        else:
-            z_input_temporal_start = z_predicted.shape[2] - z_cond.shape[2]
-            model_kwargs.update({"x_temporal_start":z_input_temporal_start})
+        # else:
+        z_input_temporal_start = z_predicted.shape[2] - z_cond.shape[2]
+        model_kwargs.update({"x_temporal_start":z_input_temporal_start})
 
         if not model.is_causal: # TODO ideally remove this, 
             # and find a better way to run baseline's auto-regression in both training & inference
@@ -291,6 +312,9 @@ def autoregressive_sample(
                 mask_channel = torch.cat([mask_channel]*2, dim=0) #
             model_kwargs.update({"mask_channel":mask_channel})
 
+        if envs.DEBUG_KV_CACHE4:
+            noise_chunk = z_input[:,:,cond_len:,:,:]
+            print(f"<autoregressive_sample>: ar_step={ar_step}: noise_chunk:{noise_chunk[0,0,:,0,0]}, {noise_chunk.shape}")
         samples = scheduler.sample_v2(
             model,
             z= z_input,
@@ -305,11 +329,18 @@ def autoregressive_sample(
         else:
             assert samples.shape[2] == cond_len + denoise_len
         samples = samples[:,:,cond_len:cond_len+denoise_len,:,:]
+        if envs.DEBUG_KV_CACHE4:
+            print(f"<autoregressive_sample>: ar_step={ar_step}: samples={samples[0,0,:,0,0]}, {samples.shape}")
+            filename = f"wo_kv_cache_denoised_chunk_arstep{ar_step:02d}_BCTHW.pt"
+            torch.save(samples,f"{envs.TENSOR_SAVE_DIR}/{filename}")
 
         z_predicted = torch.cat([z_predicted,samples],dim=2) # (B,C, T_accu + T_n, H, W)
 
         if verbose: 
             print(f"ar_step={ar_step}: given {predicted_len} frames,  denoise:{samples.shape} --> get:{z_predicted.shape}")
+        
+        # if envs.DEBUG_KV_CACHE3:
+        #     assert ar_step < 0
 
     time_used = time.time() - time_start
     num_gen_frames = z_predicted.shape[2] - num_given_frames

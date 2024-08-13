@@ -167,7 +167,7 @@ def save_sample(x, fps=8, save_path=None, normalize=True, value_range=(-1, 1), f
         x (Tensor): shape [C, T, H, W]
     """
     assert x.ndim == 4
-    print(f"Save to {save_path}")
+    # print(f"Save to {save_path}")
     if not force_video and x.shape[1] == 1:  # T = 1: save as image
         save_path += ".png"
         x = x.squeeze(1)
@@ -181,7 +181,7 @@ def save_sample(x, fps=8, save_path=None, normalize=True, value_range=(-1, 1), f
 
         x = x.mul(255).add_(0.5).clamp_(0, 255).permute(1, 2, 3, 0).to("cpu", torch.uint8)
         write_video(save_path, x, fps=fps, video_codec="h264")
-    # print(f"Saved to {save_path}")
+    print(f"Saved to {save_path}")
     return save_path
 
 
