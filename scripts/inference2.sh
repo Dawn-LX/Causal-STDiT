@@ -15,9 +15,11 @@ NUM_GPUS=$(echo $CUDA_VISIBLE_DEVICES | awk -F',' '{print NF}')
 
 export IS_DEBUG=1
 export DEBUG_WITHOUT_LOAD_PRETRAINED=0
-export DEBUG_KV_CACHE2=1
+export DEBUG_KV_CACHE2=0
+export DEBUG_KV_CACHE3=0
 # export TENSOR_SAVE_DIR="/home/gkf/project/CausalSTDiT/working_dirSampleOutput/_debug_KVcache_wo_CfAttn"
-export TENSOR_SAVE_DIR="/home/gkf/project/CausalSTDiT/working_dirSampleOutput/_debug_KVcache"
+# export TENSOR_SAVE_DIR="/home/gkf/project/CausalSTDiT/working_dirSampleOutput/_debug_KVcache"
+export TENSOR_SAVE_DIR="/home/gkf/project/CausalSTDiT/working_dirSampleOutput/_debugReorganizedTpeMaxCondLen25"
 export KV_CACHE_TAG=${EXP_DIR:${#EXP_DIR}-15}
 
 torchrun \
@@ -191,6 +193,23 @@ parser.add_argument("--exp_dir",type=str, default="/data/CausalSTDiT_working_dir
         /data/CausalSTDiT_working_dir/CausalSTDiT2-XL2_exp2_BaselineCausalAttnFixedTpe_33x256x256ArSize8pp3/training_config_backup.json2024-08-04T21-43-51.json \
         /data/CausalSTDiT_working_dir/CausalSTDiT2-XL2_exp2_BaselineCausalAttnFixedTpe_33x256x256ArSize8pp3/epoch1-global_step13000 \
         working_dirSampleOutput/_debug_KVcache/CausalFixedMaxCond25_with_kv_cache \
+        9985 0
+    
+
+    ### causal-attn cyclic tpe w/o kv-cache
+        bash /home/gkf/project/CausalSTDiT/scripts/inference2.sh \
+        configs/baselines/infer_example_SkyTimelapse_NoKVCache.py \
+        /data/CausalSTDiT_working_dir/CausalSTDiT2-XL2_33x256x256ArSize8pp3_timelapse/training_config_backup.json2024-08-01T16-33-58.json \
+        /data/CausalSTDiT_working_dir/CausalSTDiT2-XL2_33x256x256ArSize8pp3_timelapse/epoch1-global_step14000 \
+        working_dirSampleOutput/_debugReorganizedTpeMaxCondLen25/CausalCyclic_wo_kv_cache \
+        9983 0
+    
+    ### causal-attn cyclic tpe w/ kv-cache
+        bash /home/gkf/project/CausalSTDiT/scripts/inference2.sh \
+        configs/baselines/infer_example_SkyTimelapse_kv_cache.py \
+        /data/CausalSTDiT_working_dir/CausalSTDiT2-XL2_33x256x256ArSize8pp3_timelapse/training_config_backup.json2024-08-01T16-33-58.json \
+        /data/CausalSTDiT_working_dir/CausalSTDiT2-XL2_33x256x256ArSize8pp3_timelapse/epoch1-global_step14000 \
+        working_dirSampleOutput/_debugReorganizedTpeMaxCondLen25/CausalCyclic_with_kv_cache \
         9985 0
 
 comment

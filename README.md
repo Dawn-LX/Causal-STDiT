@@ -11,7 +11,7 @@ https://github.com/Dawn-LX/CausalSTDiT/blob/e98441db47e1ab87b647d42b2db036b210ee
 w/ kv-cache
     ar_step=0 
         latent >> cond: [0] denoise: [1-8]
-        tpe >>    cond: [8] denoise: [1-8]
+        tpe >>    cond: [0] denoise: [1-8]
     
     ar_step=1 
         latent >> cond: [0][1-8] denoise [9-16]
@@ -43,7 +43,7 @@ w/ kv-cache
 w/ kv-cache max_cond_len=9, max_tpe_len=33
     ar_step=0 
         latent >> cond: [0] denoise: [1-8]
-        tpe >>    cond: [8] denoise: [1-8]
+        tpe >>    cond: [0] denoise: [1-8]
     
     ar_step=1 
         latent >> cond: [0][1-8] denoise [9-16]
@@ -65,7 +65,7 @@ w/ kv-cache max_cond_len=9, max_tpe_len=33
 w/o kv-cache
     ar_step=0 
         latent >> cond: [0] denoise: [1-8]
-        tpe >>    cond: [8] denoise: [1-8]
+        tpe >>    cond: [0] denoise: [1-8]
     
     ar_step=1 
         latent >> cond: [0][1-8] denoise [9-16]
@@ -120,7 +120,7 @@ w/ kv-cache
 w/o kv-cache (tpe's cyclic shift will not happen)
     ar_step=0 
         latent >> cond: [0] denoise: [1-8]
-        tpe >>    cond: [8] denoise: [1-8]
+        tpe >>    cond: [0] denoise: [1-8]
     
     ar_step=1 
         latent >> cond: [0][1-8] denoise [9-16]

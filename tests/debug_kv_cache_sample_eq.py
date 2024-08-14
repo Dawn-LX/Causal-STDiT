@@ -1,5 +1,5 @@
 import torch
-
+import torchvision
 def num_allclose(x,y,eps=1e-6):
     return (torch.abs(x-y) < eps).sum().item()
 
@@ -46,7 +46,7 @@ def main():
         #     frame_id+=1
 
 def main_rgb():
-    import torchvision
+    
     # _tag = "_debug_KVcache_wo_CfAttn"
     _tag = "_debug_KVcache"
     absdiff_path = f"working_dirSampleOutput/{_tag}/idx0_seed555_with_wo_kvcache.mp4.absdiff.mp4"
@@ -64,10 +64,29 @@ def main_rgb():
 
         print(i,absdiff_sum,absdiff_mean,num_eq/num_all)
 
+def main_rgb2(abs_diff_video_path):
+    frames, _, info = torchvision.io.read_video(abs_diff_video_path, pts_unit='sec',output_format = "THWC")
+    fps = info['video_fps']
+    T = frames.shape[0]
+    frames = frames.to(torch.float32)
+    chunk2Tids = [[0]] + [list(range(1+i*8,1+i*8 + 8)) for i in range(T//8)]
+    # [0][1-8][9-16][17-24],...,[153-160]
+    print(chunk2Tids)
+    for i,Tids in enumerate(chunk2Tids):
+        absdiff = frames[Tids,:,:,:]
+        absdiff_sum = int(absdiff.sum().item())
+        absdiff_mean = absdiff.mean().item()
+        eps=3
+        num_eq = ((absdiff - torch.zeros_like(absdiff)) < eps).sum().item()
+        num_all = absdiff.numel()
+
+        print(i,absdiff_sum,absdiff_mean,num_eq/num_all)
 
 if __name__ == "__main__":
     # main()
-    main_rgb()
+    main_rgb2(
+        "/home/gkf/project/CausalSTDiT/working_dirSampleOutput/_debugReorganizedTpeMaxCondLen25/CausalCyclic_idx0_seed555_with_wo_kvcache.mp4.absdiff.mp4"
+    )
     
     '''
     w/o cf-attn, max_cond_len=25
