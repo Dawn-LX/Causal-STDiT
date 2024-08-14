@@ -81,8 +81,11 @@ class AttentionWithContext(nn.Module):
                 if debug_info=="attn_cf_with_kv_cache":
                     k = extra_k  # (B,num_heads,N,head_dim) for enable_flash_attn
                     v = extra_v
+                    # print("<AttentionWithContext.forward>: use debug_info=attn_cf_with_kv_cache")
 
             else:
+                if debug_info == "attn_cf_with_self_repeat":
+                    pass
                 qkv = self.qkv(context)
                 qkv_shape = (B, N_c, 3, self.num_heads, self.head_dim)
                 qkv = qkv.view(qkv_shape).permute(qkv_permute_shape)

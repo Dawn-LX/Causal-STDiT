@@ -7,7 +7,7 @@ def num_allclose(x,y,eps=1e-6):
 def main():
     # _tag = "_debug_KVcache_wo_CfAttn"
     _tag = "_debug_KVcache"
-    N_atsteps = 20
+    N_atsteps = 4
     chunks_with_kvcahe = []
     path_with_kvcache = "working_dirSampleOutput/{}/with_kv_cache_denoised_chunk_arstep{:02d}_BCTHW.pt"
     for i in range(N_atsteps):
@@ -47,8 +47,8 @@ def main():
 
 def main_rgb():
     import torchvision
-    _tag = "_debug_KVcache_wo_CfAttn"
-    # _tag = "_debug_KVcache"
+    # _tag = "_debug_KVcache_wo_CfAttn"
+    _tag = "_debug_KVcache"
     absdiff_path = f"working_dirSampleOutput/{_tag}/idx0_seed555_with_wo_kvcache.mp4.absdiff.mp4"
     frames, _, info = torchvision.io.read_video(absdiff_path, pts_unit='sec',output_format = "THWC")
     fps = info['video_fps']
@@ -56,7 +56,7 @@ def main_rgb():
     frames = frames.to(torch.float32)
     for i in range(T):
         absdiff = frames[i,:,:,:]
-        absdiff_sum = absdiff.sum().item()
+        absdiff_sum = int(absdiff.sum().item())
         absdiff_mean = absdiff.mean().item()
         eps=3
         num_eq = ((absdiff - torch.zeros_like(absdiff)) < eps).sum().item()
@@ -66,8 +66,8 @@ def main_rgb():
 
 
 if __name__ == "__main__":
-    main()
-    # main_rgb()
+    # main()
+    main_rgb()
     
     '''
     w/o cf-attn, max_cond_len=25

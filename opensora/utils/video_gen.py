@@ -182,6 +182,11 @@ def autoregressive_sample_kv_cache(
             progress_bar = verbose
         ) # (B, C,T_n,H,W)
         
+        if envs.DEBUG_KV_CACHE3:
+            print(f"<autoregressive_sample>: ar_step={ar_step}: samples={samples[0,0,:,0,0]}, {samples.shape}")
+            filename = f"with_kv_cache_denoised_chunk_arstep{ar_step:02d}_BCTHW.pt"
+            torch.save(samples,f"{envs.TENSOR_SAVE_DIR}/{filename}")
+            # assert ar_step < 2
 
         model.write_latents_to_cache(
             torch.cat([samples]*2,dim=0) if do_cls_free_guidance else samples,
@@ -316,6 +321,11 @@ def autoregressive_sample(
         else:
             assert samples.shape[2] == cond_len + denoise_len
         samples = samples[:,:,cond_len:cond_len+denoise_len,:,:]
+        if envs.DEBUG_KV_CACHE3:
+            print(f"<autoregressive_sample>: ar_step={ar_step}: samples={samples[0,0,:,0,0]}, {samples.shape}")
+            filename = f"wo_kv_cache_denoised_chunk_arstep{ar_step:02d}_BCTHW.pt"
+            torch.save(samples,f"{envs.TENSOR_SAVE_DIR}/{filename}")
+            # assert ar_step < 2
 
         z_predicted = torch.cat([z_predicted,samples],dim=2) # (B,C, T_accu + T_n, H, W)
 

@@ -1,5 +1,6 @@
-import numpy as np
 import random
+from typing import Union,Optional,List,Dict
+import numpy as np
 import torch
 import torch.distributed as dist
 import torch.nn as nn
@@ -254,6 +255,13 @@ class CausalSTDiT2Block(nn.Module):
         x_s = self.attn(x_s)
         x_s = rearrange(x_s, "(B T) S C -> B (T S) C", T=T, S=S)
         x = x + self.drop_path(gate_msa * x_s)
+        if envs.DEBUG_KV_CACHE2 and self._block_idx==0:
+            x2print = rearrange(x, "B (T S) C -> B T S C",T=T, S=S)
+            x2print2 = x2print[0,:,0,10]
+            print(f"<CausalSTDiT2Block.forward>: after attn \n >>> x:{x2print2}, {x2print.shape}")
+            filename = "wo_kv_cache_after_attn_xBTSC.pt"
+            print(f"{envs.TENSOR_SAVE_DIR}/{filename}")
+            torch.save(x2print,f"{envs.TENSOR_SAVE_DIR}/{filename}")
 
         ######### cross-frame attn spatial branch
         if self.spatial_attn_enhance is not None:
@@ -284,15 +292,21 @@ class CausalSTDiT2Block(nn.Module):
             else:
                 raise NotImplementedError(f"self.spatial_attn_enhance={sae_mode} is not implemented")
             
-            spatial_cond = rearrange(spatial_cond,"B T S C -> (B T) S C", T =T)
+            spatial_cond = rearrange(spatial_cond,"B T S C -> (B T) S C", T =T) # (B T) (prev_L S) C
 
             x_s_ = rearrange(x_s_,"B T S C -> (B T) S C", T =T, S = S)
-            x_s_ = self.attn_cf(x_s_, context = spatial_cond, is_ctx_as_kv=False, debug_info=("attn_cf_wo_kv_cache",T))
+            x_s_ = self.attn_cf(x_s_, context = spatial_cond, is_ctx_as_kv=False,debug_info="attn_cf_with_self_repeat")
             x_s_ = rearrange(x_s_, "(B T) S C -> B (T S) C", T =T, S = S)
 
             x =  x + self.drop_path(gate_msa * x_s_)
-            
-            
+
+            if envs.DEBUG_KV_CACHE2 and self._block_idx==0:
+                x2print = rearrange(x, "B (T S) C -> B T S C",T=T, S=S)
+                x2print2 = x2print[0,:,0,10]
+                filename = "wo_kv_cache_after_attnCF_xBTSC.pt"
+                torch.save(x2print,f"{envs.TENSOR_SAVE_DIR}/{filename}")
+                print(f"<CausalSTDiT2Block.forward>: after attn_cf \n >>> x:{x2print2}, {x2print.shape}")
+
 
         ######### temporal branch
         x_t = rearrange(x, "B (T S) C -> (B S) T C", T=T, S=S)
@@ -363,48 +377,65 @@ class CausalSTDiT2Block(nn.Module):
         x_s = self.attn(x_s)
         x_s = rearrange(x_s, "(B T) S C -> B (T S) C", T=T, S=S)
         x = x + self.drop_path(gate_msa * x_s)
-
+        if envs.DEBUG_KV_CACHE2 and self._block_idx==0:
+            x2print = rearrange(x, "B (T S) C -> B T S C",T=T, S=S)
+            x2print2 = x2print[0,:,0,10]
+            print(f"<CausalSTDiT2Block.forward_kv_cache>: after attn \n >>> x:{x2print2}, {x2print.shape}")
+        
+        
         cached_kv_s,cached_kv_t = cached_kv
-        if cached_kv_s is not None:
-            T_p = cached_kv_s.shape[1] # B T_p S C*2
-            assert T_p == self.spatial_attn_ctx_len
-            # n_ctx_frames = 1 if sae_mode =="first_frame" else int(sae_mode.split('_')[-1]) # e.g., prev_frames_3
-        if cached_kv_t is not None:
-            T_accu = cached_kv_t.shape[1] # B T_accu S C*2
-
+        cached_kv_s: Union[None, torch.Tensor]  # B T_p S C*2
+        cached_kv_t: Union[None, torch.Tensor]  # B T_accu S C*2
+            
         # =======================================================================
         # cross-frame attn spatial branch
         # =======================================================================
         spatial_kv = None
         if self.spatial_attn_enhance is not None:
             x_s = rearrange(x, "B (T S) C -> (B T) S C",T=T,S=S)
-            if cached_kv_s is not None: # this can be None when writing 1st frame to cache
-                cached_kv_s: torch.Tensor # B T_p S C; T_p = prev_L
-                cached_kv_s = rearrange(cached_kv_s,"B T S C -> B (T S) C")
+            is_clean_x = return_kv==True # or is_clean_x = t==0
+            T_p = self.spatial_attn_ctx_len
+            
+            if is_clean_x: # for writing clean latents to kv-cache
+                assert cached_kv_s is None, "spatial kv-cache does not rely on previous spatial kv-cache"
+
+                _x_s_repeat = x_s.repeat(1,T_p,1) # (B T) (T_p S) C
+                x_s,spatial_kv = self.attn_cf(x_s, context=_x_s_repeat, is_ctx_as_kv=False, return_kv = True)
+                x_s:torch.Tensor        # (B T) S C
+                spatial_kv:torch.Tensor # (B T) S C*2
+
+                spatial_kv = rearrange(spatial_kv,"(B T) S C -> B T S C",T=T, S= S)
+                if self.spatial_attn_enhance == "first_frame":
+                    spatial_kv = spatial_kv[:,:1,:,:]  # B 1 S C*2
+                    # NOTE here `:1` index the relative 1st frame of the current chunk
+                    # , so `spatial_kv` will only be written once for the 1st call (the true 1st frame of the video)
+                    # refer to `CausalSTDiT2.write_kv_cache`
+                else:
+                    if T < (T_p:=self.spatial_attn_ctx_len):
+                        # e.g., T==1 for write 1st frame to cache
+                        spatial_kv = spatial_kv.repeat_interleave(T_p//T+1,dim=1)[:,:T_p,:,:]
+                    else:
+                        spatial_kv = spatial_kv[:,-T_p:,:,:]  # B T_p S C*2
+
+                x_s = rearrange(x_s,"(B T) S C -> B (T S) C",T=T, S= S)
+                x = x + self.drop_path(gate_msa * x_s)
+            
+            else: # for denoise, conditioned no cached spatial-kv
+                assert cached_kv_s is not None  # B T_p S C*2
+                assert  cached_kv_s.shape[1] == T_p
+                cached_kv_s = rearrange(cached_kv_s,"B T_p S C -> B (T_p S) C", T_p=T_p)
                 cached_kv_s = cached_kv_s[:,None,:,:].repeat_interleave(T,dim=1) # B T (T_p S) C*2
                 cached_kv_s = rearrange(cached_kv_s,"B T S C -> (B T) S C", T=T) # (B T) (T_p S) C*2
 
-            _debug_T_accu = None if cached_kv_t is None else T_accu
-            x_s, spatial_kv = self.attn_cf(x_s,context=cached_kv_s, is_ctx_as_kv=True,return_kv = True,debug_info=("attn_cf_with_kv_cache",_debug_T_accu))
-            spatial_kv = rearrange(spatial_kv,"(B T) S C -> B T S C",T=T, S= S)
+                x_s = self.attn_cf(x_s, context=cached_kv_s, is_ctx_as_kv=True, return_kv = False,debug_info="attn_cf_with_kv_cache")
+                x_s = rearrange(x_s,"(B T) S C -> B (T S) C",T=T, S= S)
+                x = x + self.drop_path(gate_msa * x_s)
 
-            
-            if self.spatial_attn_enhance == "first_frame":
-                spatial_kv = spatial_kv[:,:1,:,:]  # B 1 S C*2
-                # NOTE here `:1` index the relative 1st frame of the current chunk
-                # , so `spatial_kv` will only be written once for the 1st call (the true 1st frame of the video)
-                # refer to `CausalSTDiT2.write_kv_cache`
-            else:
-                if T < (T_p:=self.spatial_attn_ctx_len):
-                    # e.g., T==1 for write 1st frame to cache
-                    spatial_kv = spatial_kv.repeat_interleave(T_p//T+1,dim=1)[:,:T_p,:,:]
-                else:
-                    spatial_kv = spatial_kv[:,-T_p:,:,:]  # B T_p S C*2
+            if envs.DEBUG_KV_CACHE2 and self._block_idx==0:
+                x2print3 = rearrange(x, "B (T S) C -> B T S C",T=T, S=S)
+                x2print4 = x2print3[0,:,0,10]
+                print(f"<CausalSTDiT2Block.forward_kv_cache>: after attn_cf \n >>> x:{x2print4}, {x2print3.shape}")
 
-            x_s = rearrange(x_s,"(B T) S C -> B (T S) C",T=T, S= S)
-            x = x + self.drop_path(gate_msa * x_s)
-
-        
         # =======================================================================
         # temporal branch
         # =======================================================================
@@ -423,6 +454,7 @@ class CausalSTDiT2Block(nn.Module):
             x_t = self.attn_temp_pre_merge(x_t) # (B S) T C  == (b*h*w, ws, c)
         
         if cached_kv_t is not None:
+            T_accu = cached_kv_t.shape[1] # B T_accu S C*2
             cached_kv_t = rearrange(cached_kv_t,"B T S C -> (B S) T C", T=T_accu)
 
         x_t,temporal_kv = self.attn_temp(x_t,context=cached_kv_t,is_ctx_as_kv=True,return_kv = True)
@@ -612,6 +644,10 @@ class CausalSTDiT2(nn.Module):
         for w/o kv-cache (inference)
             chunk_len = denoise_len, cond_len = len(cached_kv)
         '''
+
+        if with_kv_cache and mode is None:
+            assert chunk_start_idx + chunk_len <= max_tpe_len
+            # refer to `tests/debug_autoregre_enumerate.py`
         
         if mode is None: # fixed (absolute) tpe
             if self.training:
@@ -759,7 +795,6 @@ class CausalSTDiT2(nn.Module):
         # embedding
         x = self.x_embedder(x)  # [B, N, C]  # N = (16/1)*(32/2)*(32/2)
         x = rearrange(x, "B (T S) C -> B T S C", T=num_temporal, S=self.num_spatial)
-
         x = x + self.pos_embed
         x = rearrange(x, "B T S C -> B (T S) C")
 
@@ -815,6 +850,12 @@ class CausalSTDiT2(nn.Module):
         
         x = self.unpatchify(x,input_size)  # [B, C_out, T, H, W]
         
+        if envs.DEBUG_KV_CACHE3:
+            t_scalar = timestep.reshape(-1)[-1].item()
+            if t_scalar>=990 or t_scalar<=10 :
+                print(f"<CausalSTDiT2.forward>:\n >>> t={t_scalar}, x={x[0,0,:,0,0]}, {x.shape}")
+                # assert False
+
         x = x.to(torch.float32) # cast to float32 for better accuracy
         return x
 
@@ -845,8 +886,8 @@ class CausalSTDiT2(nn.Module):
     def write_kv_cache(self,clean_x,y,mask,start_id): 
         # support old version code
 
-        cached_len = self.cache_indicator.sum().item()
-        assert start_id == cached_len
+        L_cache_accu = self.cache_indicator.sum().item()
+        assert start_id == L_cache_accu
 
         self.write_latents_to_cache(clean_x,y,mask)
 
@@ -904,10 +945,10 @@ class CausalSTDiT2(nn.Module):
     
     def _fetch_kv_cache(self):
         
-        cached_len = self.cache_indicator.sum().item()
+        L_cache_accu = self.cache_indicator.sum().item()
         if self.spatial_attn_enhance == "first_frame":
-            assert self._1st_frame_kv_written == (cached_len > 0)
-        if cached_len == 0:
+            assert self._1st_frame_kv_written == (L_cache_accu > 0)
+        if L_cache_accu == 0:
             return None,None
         
         if self.spatial_attn_enhance is not None:
@@ -916,13 +957,13 @@ class CausalSTDiT2(nn.Module):
             spatial_kv = None
 
 
-        if cached_len > len(self.cache_indicator): # this happens if kv_cache_dequeue
-            cached_len = len(self.cache_indicator)
+        if L_cache_accu > len(self.cache_indicator): # this happens if kv_cache_dequeue
+            L_cache_accu = len(self.cache_indicator)
         
-        temporal_kv = self.cache_kv[:,:,:cached_len,:,:] # D B T_accu S C
+        temporal_kv = self.cache_kv[:,:,:L_cache_accu,:,:] # D B T_accu S C
         if envs.DEBUG_KV_CACHE: 
-            fetched_cache_ids = self.cache_ids[:cached_len]
-            print(f"fetched_cache_ids = {fetched_cache_ids}, cached_len={cached_len}")
+            fetched_cache_ids = self.cache_ids[:L_cache_accu]
+            print(f"fetched_cache_ids = {fetched_cache_ids}, L_cache_accu={L_cache_accu}")
         
         return (
             spatial_kv, # B T_p S C*2
@@ -953,16 +994,16 @@ class CausalSTDiT2(nn.Module):
         ## for temporal kv
         _,B,len_to_write = temporal_kv.shape[:3] # D B T S C*2
 
-        cached_len = self.cache_indicator.sum().item() # cache_indicator can be [1,1,1,1,1,5], i.e., cached_len can > len(cache_indicator)
-        if cached_len + len_to_write > len(self.cache_indicator):
+        L_cache_accu = self.cache_indicator.sum().item() # cache_indicator can be [1,1,1,1,1,5], i.e., L_cache_accu can > len(cache_indicator)
+        if L_cache_accu + len_to_write > len(self.cache_indicator):
             print(" >>> kv_cache_dequeue")
 
-            if cached_len < len(self.cache_indicator):
+            if L_cache_accu < len(self.cache_indicator):
                 # this will happen when len_to_write > 1
-                n_dequeue = cached_len + len_to_write - len(self.cache_indicator) # This is WRONG for a very large cached_len (i.e., dequeue to mach)
+                n_dequeue = L_cache_accu + len_to_write - len(self.cache_indicator) # This is WRONG for a very large L_cache_accu (i.e., dequeue to mach)
             else:
-                # for cached_len == len(self.cache_indicator) 
-                # or cached_len > len(self.cache_indicator) # cached_len can be very large
+                # for L_cache_accu == len(self.cache_indicator) 
+                # or L_cache_accu > len(self.cache_indicator) # L_cache_accu can be very large
                 n_dequeue = len_to_write
             
             self.cache_kv = torch.roll(self.cache_kv,-n_dequeue,dims=2)
@@ -973,11 +1014,11 @@ class CausalSTDiT2(nn.Module):
                 cache_ids_to_write = self.cache_ids[-len_to_write:]
         
         else:
-            self.cache_kv[:,:B,cached_len:cached_len+len_to_write,:,:] = temporal_kv
+            self.cache_kv[:,:B,L_cache_accu:L_cache_accu+len_to_write,:,:] = temporal_kv
             # we use `:B` in case that the last batch from dataloader has a smaller batch_size
-            self.cache_indicator[cached_len:cached_len+len_to_write] +=1
+            self.cache_indicator[L_cache_accu:L_cache_accu+len_to_write] +=1
             if envs.DEBUG_KV_CACHE:
-                cache_ids_to_write = self.cache_ids[cached_len:cached_len+len_to_write]
+                cache_ids_to_write = self.cache_ids[L_cache_accu:L_cache_accu+len_to_write]
         
         if envs.DEBUG_KV_CACHE:
             print(f"cache_ids_to_write: {cache_ids_to_write}")
@@ -1037,32 +1078,31 @@ class CausalSTDiT2(nn.Module):
 
         # blocks
         cached_kv_s,cached_kv_t = self._fetch_kv_cache() # this can be None for the 1st call (i.e., write the given 1st frame to kv-cache)
-        # spatial_kv,  # (depth, B, T_p, S, C*2)
-        # temporal_kv  # (depth, B, T_accu, S, C*2)
+        # cached_kv_s,  # (depth, B, T_p, S, C*2)
+        # cached_kv_t  # (depth, B, T_accu, S, C*2)
+        cached_kv_s = None # overwtite it, spatial kv-cache does not rely on previous spatial-kv-cache
         
         kv_cache_to_write = []
-        cached_len = self.cache_indicator.sum().item()
+        L_cache_accu = self.cache_indicator.sum().item() # this can be 0 for the 1st call (i.e., write the given 1st frame to kv-cache)
         for i, block in enumerate(self.blocks):
             block:CausalSTDiT2Block
             if i == 0:
                 tpe = self.get_relative_tpe(
                     chunk_len=num_temporal,
-                    chunk_start_idx=cached_len,
+                    chunk_start_idx=L_cache_accu,
                     with_kv_cache=True
                 )
-                        
-                        
                 mask_channel_input = mask_channel
             else:
                 tpe = None
                 mask_channel_input = mask_channel if self.temp_extra_in_all_block else None
             
-            kv_s = None if cached_kv_s is None else cached_kv_s[i]
+            kv_s = None
             kv_t = None if cached_kv_t is None else cached_kv_t[i]
-            cached_kv = (kv_s,kv_t)
+            cached_kv_i = (kv_s,kv_t)
 
             x, spatial_kv,temporal_kv = block.forward_kv_cache(
-                x, y, t_mlp, y_lens, tpe, mask_channel_input, cached_kv=cached_kv,
+                x, y, t_mlp, y_lens, tpe, mask_channel_input, cached_kv=cached_kv_i,
                 return_kv=True, return_kv_only = (i == len(self.blocks)-1)
             )
 
@@ -1070,6 +1110,7 @@ class CausalSTDiT2(nn.Module):
                 spatial_kv,     # (B, T_p, S, C*2) 
                 temporal_kv,    # (B, T, S, C*2) 
             ))
+        
         if self.spatial_attn_enhance is not None:
             spatial_kv  = torch.stack([st_kv[0] for st_kv in  kv_cache_to_write],dim=0) # (depth, B, T_p, S, C*2)
         else:
@@ -1116,19 +1157,20 @@ class CausalSTDiT2(nn.Module):
         cached_kv_s,cached_kv_t = self._fetch_kv_cache() # this can be None for the 1st call (i.e., write the given 1st frame to kv-cache)
         # cached_kv_s,  # (depth, B, T_p, S, C*2)
         # cached_kv_t  # (depth, B, T_accu, S, C*2)
-        cached_len = self.cache_indicator.sum().item() # TODO rename this as accu_cached_len
-        assert cached_len > 0 , "call `write_latents_to_cache` first"
+        L_cache_accu = self.cache_indicator.sum().item() 
+        assert L_cache_accu > 0 , "call `write_latents_to_cache` first"
         assert cached_kv_t is not None,  "call `write_latents_to_cache` first"
+
         if start_id is not None:
             # start_id is used in old-version code, remove this ideally
-            assert start_id == cached_len, f"start_id={start_id},cached_len={cached_len} " 
+            assert start_id == L_cache_accu, f"start_id={start_id},L_cache_accu={L_cache_accu} " 
         
         for i, block in enumerate(self.blocks):
             block:CausalSTDiT2Block
             if i == 0:
                 tpe = self.get_relative_tpe(
                     chunk_len=num_temporal,
-                    chunk_start_idx=cached_len,
+                    chunk_start_idx=L_cache_accu,
                     with_kv_cache=True
                 )
 
@@ -1148,6 +1190,12 @@ class CausalSTDiT2(nn.Module):
         input_size = (num_temporal, self.input_size[1], self.input_size[2])
         x = self.unpatchify(x,input_size)  # [B, C_out, T, H, W]
         
+        if envs.DEBUG_KV_CACHE3:
+            t_scalar = timestep.reshape(-1)[-1].item()
+            if t_scalar>=990 or t_scalar<=10 :
+                print(f"<CausalSTDiT2.forward>:\n >>> t={t_scalar}, x={x[0,0,:,0,0]}, {x.shape}")
+                # assert False
+
         x = x.to(torch.float32) # cast to float32 for better accuracy
         return x
     

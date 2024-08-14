@@ -451,7 +451,7 @@ class GaussianDiffusion:
         )
         noise = torch.randn_like(x)
 
-        if envs.DEBUG_KV_CACHE2:
+        if envs.DEBUG_KV_CACHE3:
             generator = torch.Generator(device=x.device)
             generator.manual_seed(t_scalar:=t.reshape(-1)[0].item())
             B,C,T,H,W = x.shape

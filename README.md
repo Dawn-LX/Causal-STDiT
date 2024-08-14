@@ -1,3 +1,6 @@
+https://github.com/Dawn-LX/CausalSTDiT/blob/e98441db47e1ab87b647d42b2db036b210ee7944/opensora/models/causal_stdit2/causal_stdit2.py#L515
+这样也是不对的，kv_cache_t 是来自于 temp_attn 的kv_linear, 不能给self.attn_cf用
+
 ```python
 
 # ======================================================================
