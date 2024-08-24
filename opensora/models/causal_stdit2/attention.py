@@ -1,16 +1,69 @@
 import random
+from typing import Union
 import torch
 import numpy as np
 import torch
 import torch.nn as nn
 import torch.distributed as dist
 from einops import rearrange
+try:
+    from flash_attn import flash_attn_func
+except:
+    print("flash_attn is not installed")
 
 from opensora.acceleration.communications import all_to_all, split_forward_gather_backward
 from opensora.acceleration.parallel_states import get_sequence_parallel_group
 
 from opensora.models.layers.blocks import LlamaRMSNorm
 from opensora.utils.debug_utils import envs
+
+def partial_causal_flash_attn(q,k,v, **kwargs):
+    '''# NOTE spatial attn should not go here'''
+    # q,k,v :   (B, N, num_heads,head_dim)
+    seqlen_q = q.shape[1]
+    seqlen_kv = k.shape[1]
+
+    assert "causal" not in kwargs, "let me decide is causal or not inside `partial_causal_flash_attn`"
+
+    use_partial = "cond_len" in kwargs
+    use_dynamic = "is_clean_x" in kwargs
+    assert use_partial ^ use_dynamic # XOR operation, there is one and only one `True`
+
+    if use_partial: # partial causal, for training or infer w/o kv-cache
+        assert seqlen_q == seqlen_kv # 
+        T_c = kwargs.pop("cond_len")
+        assert 0< T_c and T_c < seqlen_q
+        # seqlen == T_c + T_n
+        
+        x1 = flash_attn_func(q,k,v,causal=True, **kwargs) # (B, seqlen, num_heads,head_dim)
+        x2 = flash_attn_func(q,k,v,causal=False,**kwargs)
+        x = torch.cat([x1[:,:T_c,:,:],x2[:,T_c:,:,:]],dim=1) # (B, seqlen, num_heads,head_dim)
+        ''' or, use the following code to reduce seqlen of x2's full-attn
+        q2 = q[:,T_c:,:,:]
+        x2 = flash_attn_func(q2,k,v,causal=False,**kwargs) # (B, T_n, num_heads,head_dim)
+        x = torch.cat([x1[:,:T_c,:,:],x2],dim=1)
+        '''
+
+    else: # dynamic causal or non-causal, for auto-regre inference w/ kv-cache
+        
+        # seqlen_q = T_n
+        # seqlen_kv = T_c + T_n
+        # NOTE here a special case is that writing 1st-frame to cache, where seqlen_q == seqlen_kv == 1 (or the `first_k` given frames)
+        # so we do not `seqlen_q == seqlen_kv` to decide whether "partial" or "dynamic"
+
+        if is_clean_x := kwargs.pop("is_clean_x"):
+            causal = True # for writing kv-cache, i.e., after finish denoise the T_n part
+        else:
+            causal = False # for denoising chunk conditioned on clean prefix 
+        x = flash_attn_func(q,k,v,causal=causal, **kwargs) # (B, T_n, num_heads,head_dim)
+        ''' 
+        NOTE for writing kv-cache, we should use causal-attention for the whole seqlen of T_c + T_n
+        because now the chunk is clean, in the next auto-regre step, the denoise chunk is conditioned on the clean_x that
+        was computed from causal attn. i.e., for clean_x, we always compute causal-attn
+        i.e., we always compute causal-attn for the seqlen range of "clean" sequence part.
+        '''
+
+    return x
 
 class AttentionWithContext(nn.Module):
     def __init__(
@@ -23,7 +76,7 @@ class AttentionWithContext(nn.Module):
         proj_drop: float = 0.0,
         norm_layer: nn.Module = LlamaRMSNorm,
         enable_flash_attn: bool = False,
-        is_causal: bool = False,
+        is_causal:  Union[bool,str] = False,  # True, False, or "partial"
     ) -> None:
         super().__init__()
         assert dim % num_heads == 0, "dim should be divisible by num_heads"
@@ -42,7 +95,7 @@ class AttentionWithContext(nn.Module):
 
         self.is_causal = is_causal
 
-    def forward(self, x: torch.Tensor, context: torch.Tensor = None, is_ctx_as_kv = False, return_kv=False,debug_info=None) -> torch.Tensor:
+    def forward(self, x: torch.Tensor, context: torch.Tensor = None, is_ctx_as_kv = False, return_kv=False,**kwargs) -> torch.Tensor:
         B, N, C = x.shape
         # flash attn is not memory efficient for small sequences, this is empirical
         # enable_flash_attn = self.enable_flash_attn and (N > B) # TODO
@@ -78,14 +131,12 @@ class AttentionWithContext(nn.Module):
                     for spatial_attn:  N_c + N = T_c*S + S
                     NOTE the order matters for causal temporal_attn, we must let extra_k before k in `torch.cat`
                 '''
-                if debug_info=="attn_cf_with_kv_cache":
-                    k = extra_k  # (B,num_heads,N,head_dim) for enable_flash_attn
+                if kwargs.get("debug_info",None)=="attn_cf_with_kv_cache": # TODO ideally remove this
+                    k = extra_k  # (B,N,num_heads,head_dim) for enable_flash_attn
                     v = extra_v
                     # print("<AttentionWithContext.forward>: use debug_info=attn_cf_with_kv_cache")
 
             else:
-                if debug_info == "attn_cf_with_self_repeat":
-                    pass
                 qkv = self.qkv(context)
                 qkv_shape = (B, N_c, 3, self.num_heads, self.head_dim)
                 qkv = qkv.view(qkv_shape).permute(qkv_permute_shape)
@@ -96,16 +147,23 @@ class AttentionWithContext(nn.Module):
         q, k = self.q_norm(q), self.k_norm(k)
 
         if self.enable_flash_attn:
-            from flash_attn import flash_attn_func
-
-            x = flash_attn_func(
-                q,
-                k,
-                v,
-                dropout_p=self.attn_drop.p if self.training else 0.0,
-                softmax_scale=self.scale,
-                causal = self.is_causal
-            )
+            if self.is_causal == "partial":
+                x = partial_causal_flash_attn(
+                    q,k,v,
+                    dropout_p=self.attn_drop.p if self.training else 0.0,
+                    softmax_scale=self.scale,
+                    **kwargs
+                )
+            else:
+                assert isinstance(self.is_causal,bool)
+                x = flash_attn_func(
+                    q,  # (B,N, num_heads, head_dim)
+                    k,  # (B,N_cache + N, num_heads,head_dim)
+                    v,
+                    dropout_p=self.attn_drop.p if self.training else 0.0,
+                    softmax_scale=self.scale,
+                    causal = self.is_causal
+                )
         else:
             dtype = q.dtype
             # k: (B,num_heads,N_cache + N,head_dim)
@@ -115,6 +173,11 @@ class AttentionWithContext(nn.Module):
             
             # assert not self.is_causal, "TODO: manually set a causal attn mask"
             if self.is_causal:
+                if self.is_causal == "parital": assert False, '''
+                    TODO, design the attn-mask for train & inference_with_kv_cache separately
+                    refer to tests/test_causal_attn.py
+                '''
+
                 len_k = k.shape[2]
                 len_q = q.shape[2]
                 assert len_k >= len_q, "TODO:"
@@ -210,8 +273,6 @@ class SeqParallelAttentionWithContext(AttentionWithContext):
         q, k = self.q_norm(q), self.k_norm(k)
 
         if self.enable_flash_attn:
-            from flash_attn import flash_attn_func
-
             x = flash_attn_func(
                 q,
                 k,

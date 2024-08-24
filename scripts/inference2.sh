@@ -212,4 +212,28 @@ parser.add_argument("--exp_dir",type=str, default="/data/CausalSTDiT_working_dir
         working_dirSampleOutput/_debugReorganizedTpeMaxCondLen25/CausalCyclic_with_kv_cache \
         9985 0
 
+#
+########## debug partial causal
+
+    ### causal-attn cyclic tpe w/o kv-cache
+        bash /home/gkf/project/CausalSTDiT/scripts/inference2.sh \
+        configs/baselines/infer_example_SkyTimelapse_NoKVCache.py \
+        /data/CausalSTDiT_working_dir/exp4_ParitalCausal33x256x256ArSize8pp3_tpe33_timelapse/training_config_backup.json \
+        /data/CausalSTDiT_working_dir/exp4_ParitalCausal33x256x256ArSize8pp3_tpe33_timelapse/epoch2-global_step18000 \
+        working_dirSampleOutput/partialCausalCyclic_NoisePadding_wo_cache \
+        9985 0
+    
+    # overfit partial causal w/o cf-attn
+    bash /home/gkf/project/CausalSTDiT/scripts/inference2.sh \
+    configs/baselines/infer_example_overfit_beach.py \
+    /data/CausalSTDiT_working_dir/exp4_overfit_25x256x256ArSize8NoCfAttn_tpe33/training_config_backup.json2024-08-14T21-48-57.json \
+    /data/CausalSTDiT_working_dir/exp4_overfit_25x256x256ArSize8NoCfAttn_tpe33/epoch8-global_step13000 \
+    working_dirSampleOutput/overfit_beach_MaxCond25_partialCausalCyclic_with_kv_cache \
+    9985 0
+    
+
+
+
+
+
 comment

@@ -390,11 +390,12 @@ def main(cfg):
 
                 # Save checkpoint
                 if cfg.ckpt_every_step > 0 and global_step % cfg.ckpt_every_step == 0 and is_update:
+                    not_save_optimizer = cfg.get("not_save_optimizer",False)
                     save(
                         booster,
                         model,
                         ema,
-                        optimizer,
+                        None if not_save_optimizer else optimizer,
                         lr_scheduler,
                         epoch,
                         step + 1,
@@ -528,3 +529,9 @@ if __name__ == "__main__":
     configs = merge_args(configs,args)
 
     main(configs)
+
+    '''
+    bash /home/gkf/project/CausalSTDiT/scripts/train.sh \
+        configs/baselines/exp4_partialcausal_attn_cyclic_tpe33.py \
+        9686 0
+    '''

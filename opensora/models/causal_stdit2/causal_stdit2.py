@@ -255,13 +255,6 @@ class CausalSTDiT2Block(nn.Module):
         x_s = self.attn(x_s)
         x_s = rearrange(x_s, "(B T) S C -> B (T S) C", T=T, S=S)
         x = x + self.drop_path(gate_msa * x_s)
-        if envs.DEBUG_KV_CACHE2 and self._block_idx==0:
-            x2print = rearrange(x, "B (T S) C -> B T S C",T=T, S=S)
-            x2print2 = x2print[0,:,0,10]
-            print(f"<CausalSTDiT2Block.forward>: after attn \n >>> x:{x2print2}, {x2print.shape}")
-            filename = "wo_kv_cache_after_attn_xBTSC.pt"
-            print(f"{envs.TENSOR_SAVE_DIR}/{filename}")
-            torch.save(x2print,f"{envs.TENSOR_SAVE_DIR}/{filename}")
 
         ######### cross-frame attn spatial branch
         if self.spatial_attn_enhance is not None:
@@ -300,19 +293,18 @@ class CausalSTDiT2Block(nn.Module):
 
             x =  x + self.drop_path(gate_msa * x_s_)
 
-            if envs.DEBUG_KV_CACHE2 and self._block_idx==0:
-                x2print = rearrange(x, "B (T S) C -> B T S C",T=T, S=S)
-                x2print2 = x2print[0,:,0,10]
-                filename = "wo_kv_cache_after_attnCF_xBTSC.pt"
-                torch.save(x2print,f"{envs.TENSOR_SAVE_DIR}/{filename}")
-                print(f"<CausalSTDiT2Block.forward>: after attn_cf \n >>> x:{x2print2}, {x2print.shape}")
-
 
         ######### temporal branch
         x_t = rearrange(x, "B (T S) C -> (B S) T C", T=T, S=S)
         if tpe is not None:
             x_t = x_t + tpe
         
+        
+        attn_temp_kwargs=dict()
+        if self.is_causal == "partial":
+            cond_len = int(mask_channel[0,0,:,0,0].sum().item())
+            attn_temp_kwargs.update({"cond_len":cond_len})
+
         inject_mask_channel = self.temp_extra_in_channels > 0 # TODO: maybe inject other input (channel-wise concat)
         if inject_mask_channel:
             b,_,f,_,_ = mask_channel.shape
@@ -328,7 +320,7 @@ class CausalSTDiT2Block(nn.Module):
             x_t = self.attn_temp_pre_merge(x_t) # (B S) T C
 
 
-        x_t = self.attn_temp(x_t) # (B S) T C
+        x_t = self.attn_temp(x_t,**attn_temp_kwargs) # (B S) T C
         x_t = rearrange(x_t, "(B S) T C -> B (T S) C", T=T, S= S)
         x = x + self.drop_path(gate_msa * x_t)
 
@@ -377,10 +369,6 @@ class CausalSTDiT2Block(nn.Module):
         x_s = self.attn(x_s)
         x_s = rearrange(x_s, "(B T) S C -> B (T S) C", T=T, S=S)
         x = x + self.drop_path(gate_msa * x_s)
-        if envs.DEBUG_KV_CACHE2 and self._block_idx==0:
-            x2print = rearrange(x, "B (T S) C -> B T S C",T=T, S=S)
-            x2print2 = x2print[0,:,0,10]
-            print(f"<CausalSTDiT2Block.forward_kv_cache>: after attn \n >>> x:{x2print2}, {x2print.shape}")
         
         
         cached_kv_s,cached_kv_t = cached_kv
@@ -431,10 +419,6 @@ class CausalSTDiT2Block(nn.Module):
                 x_s = rearrange(x_s,"(B T) S C -> B (T S) C",T=T, S= S)
                 x = x + self.drop_path(gate_msa * x_s)
 
-            if envs.DEBUG_KV_CACHE2 and self._block_idx==0:
-                x2print3 = rearrange(x, "B (T S) C -> B T S C",T=T, S=S)
-                x2print4 = x2print3[0,:,0,10]
-                print(f"<CausalSTDiT2Block.forward_kv_cache>: after attn_cf \n >>> x:{x2print4}, {x2print3.shape}")
 
         # =======================================================================
         # temporal branch
@@ -443,6 +427,12 @@ class CausalSTDiT2Block(nn.Module):
         if tpe is not None:
             x_t = x_t + tpe
         
+        attn_temp_kwargs = dict()
+        if self.is_causal == "partial":
+            is_clean_x = return_kv
+            attn_temp_kwargs.update({"is_clean_x":is_clean_x})
+        
+
         inject_mask_channel = self.temp_extra_in_channels > 0 # TODO: maybe inject other input (channel-wise concat)
         if inject_mask_channel:
             b,_,f,_,_ = mask_channel.shape
@@ -457,7 +447,7 @@ class CausalSTDiT2Block(nn.Module):
             T_accu = cached_kv_t.shape[1] # B T_accu S C*2
             cached_kv_t = rearrange(cached_kv_t,"B T S C -> (B S) T C", T=T_accu)
 
-        x_t,temporal_kv = self.attn_temp(x_t,context=cached_kv_t,is_ctx_as_kv=True,return_kv = True)
+        x_t,temporal_kv = self.attn_temp(x_t,context=cached_kv_t,is_ctx_as_kv=True,return_kv = True, **attn_temp_kwargs)
         x_t = rearrange(x_t,"(B S) T C -> B (T S) C", T=T, S=S)
         temporal_kv = rearrange(temporal_kv,"(B S) T C -> B T S C", T=T, S=S)
         
@@ -766,6 +756,9 @@ class CausalSTDiT2(nn.Module):
                 num_temporal == 16/1 == 16
                 num_spatial == (32/2)*(32/2) = 256
             '''
+            if envs.DEBUG_COND_LEN:
+                cond_mask = mask_channel[0,0,:,0,0]
+                print(x.shape,cond_mask.sum(),cond_mask)
             self._check_input_shape(x)
             num_temporal = self.num_temporal
         else:
@@ -818,7 +811,7 @@ class CausalSTDiT2(nn.Module):
         # blocks
         for i, block in enumerate(self.blocks):
             if i == 0:
-                if self.relative_tpe_mode is not None:
+                if (not self.training) and (self.relative_tpe_mode is not None):
                     assert x_temporal_start is not None
                 tpe = self.get_relative_tpe(
                     chunk_len= num_temporal,
@@ -850,11 +843,6 @@ class CausalSTDiT2(nn.Module):
         
         x = self.unpatchify(x,input_size)  # [B, C_out, T, H, W]
         
-        if envs.DEBUG_KV_CACHE3:
-            t_scalar = timestep.reshape(-1)[-1].item()
-            if t_scalar>=990 or t_scalar<=10 :
-                print(f"<CausalSTDiT2.forward>:\n >>> t={t_scalar}, x={x[0,0,:,0,0]}, {x.shape}")
-                # assert False
 
         x = x.to(torch.float32) # cast to float32 for better accuracy
         return x
@@ -1189,12 +1177,7 @@ class CausalSTDiT2(nn.Module):
         x = self.final_layer(x, t, num_temporal=num_temporal)  # [B, N, C=T_p * H_p * W_p * C_out]
         input_size = (num_temporal, self.input_size[1], self.input_size[2])
         x = self.unpatchify(x,input_size)  # [B, C_out, T, H, W]
-        
-        if envs.DEBUG_KV_CACHE3:
-            t_scalar = timestep.reshape(-1)[-1].item()
-            if t_scalar>=990 or t_scalar<=10 :
-                print(f"<CausalSTDiT2.forward>:\n >>> t={t_scalar}, x={x[0,0,:,0,0]}, {x.shape}")
-                # assert False
+
 
         x = x.to(torch.float32) # cast to float32 for better accuracy
         return x

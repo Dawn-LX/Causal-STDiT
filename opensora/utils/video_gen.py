@@ -279,7 +279,7 @@ def autoregressive_sample(
         z_input_temporal_start = z_predicted.shape[2] - z_cond.shape[2]
         model_kwargs.update({"x_temporal_start":z_input_temporal_start})
 
-        if not model.is_causal: # TODO ideally remove this, 
+        if (not model.is_causal) or model.is_causal=="partial": # TODO ideally remove this, 
             # and find a better way to run baseline's auto-regression in both training & inference
             # 应该直接训练的时候就用不同长度的数据，不要在末尾padding， 比如 9, 17, 25, 33， 每个batch 里面是等长的就好了
             '''NOTE
@@ -315,7 +315,7 @@ def autoregressive_sample(
             model_kwargs = model_kwargs,
             progress_bar = verbose
         ) # (B, C,T_c+T_n,H,W)
-        if not model.is_causal:
+        if (not model.is_causal) or model.is_causal=="partial": # TODO ideally remove this, 
             # samples.shape == (B, C, T, H, W); T is fixed (T== model.temporal_max_len) for each auto-regre step
             pass
         else:
