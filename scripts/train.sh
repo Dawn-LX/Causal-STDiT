@@ -11,7 +11,7 @@ MASTER_PORT=${2}
 export CUDA_VISIBLE_DEVICES=${3}
 NUM_GPUS=$(echo $CUDA_VISIBLE_DEVICES | awk -F',' '{print NF}')
 
-export IS_DEBUG=1
+export IS_DEBUG=0
 export DEBUG_COND_LEN=1
 export DEBUG_WITHOUT_LOAD_PRETRAINED=0
 export TOKENIZERS_PARALLELISM=false
@@ -60,7 +60,7 @@ torchrun \
         configs/causal_stdit/overfit_beach_ParitalCausal_CyclicTpe33.py \
         9686 0
 
-    train skyline timelapse
+    # train skyline timelapse
         bash /home/gkf/project/CausalSTDiT/scripts/train.sh \
         configs/baselines/exp4_partialcausal_attn_cyclic_tpe33.py \
         9686 0

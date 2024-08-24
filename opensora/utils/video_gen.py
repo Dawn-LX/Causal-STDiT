@@ -279,25 +279,6 @@ def autoregressive_sample(
         z_input_temporal_start = z_predicted.shape[2] - z_cond.shape[2]
         model_kwargs.update({"x_temporal_start":z_input_temporal_start})
 
-        if (not model.is_causal) or model.is_causal=="partial": # TODO ideally remove this, 
-            # and find a better way to run baseline's auto-regression in both training & inference
-            # 应该直接训练的时候就用不同长度的数据，不要在末尾padding， 比如 9, 17, 25, 33， 每个batch 里面是等长的就好了
-            '''NOTE
-            For bidirectional attention, the chunk to denoise will be affected by the noise at the end of seq
-            e.g., z_cond: [0,1,...,8], denoise_chunk: [9,..,16], noise :[17,...,33]
-            each time len(z_input) should exactly equals to model.temporal_max_len
-
-            '''
-            num_training_frames = 33
-            print(" NOTE: num_training_frames = 33 is hard-coded ", "-="*100)
-            if model.relative_tpe_mode is None:
-                assert num_training_frames==model.temporal_max_len 
-            if z_input.shape[2] < num_training_frames:
-                noise_pad_len = num_training_frames - z_input.shape[2]
-                print(f" >>> use noise padding: z_len = {z_input.shape[2]} noise_pad_len={noise_pad_len}")
-                _b,_c,_t,_h,_w = final_size
-                _noise = torch.randn(size=(_b,_c,noise_pad_len,_h,_w),**device_dtype)
-                z_input = torch.cat([z_input,_noise],dim=2)
         
         model_kwargs.update({"x_cond":z_cond})
         if model.temp_extra_in_channels > 0: # ideally remove this, the model is aware of clean-prefix using timestep emb
@@ -315,12 +296,9 @@ def autoregressive_sample(
             model_kwargs = model_kwargs,
             progress_bar = verbose
         ) # (B, C,T_c+T_n,H,W)
-        if (not model.is_causal) or model.is_causal=="partial": # TODO ideally remove this, 
-            # samples.shape == (B, C, T, H, W); T is fixed (T== model.temporal_max_len) for each auto-regre step
-            pass
-        else:
-            assert samples.shape[2] == cond_len + denoise_len
+        assert samples.shape[2] == cond_len + denoise_len, f"samples.shape={samples.shape}; cond_len={cond_len}, denoise_len={denoise_len}"
         samples = samples[:,:,cond_len:cond_len+denoise_len,:,:]
+        
         if envs.DEBUG_KV_CACHE3:
             print(f"<autoregressive_sample>: ar_step={ar_step}: samples={samples[0,0,:,0,0]}, {samples.shape}")
             filename = f"wo_kv_cache_denoised_chunk_arstep{ar_step:02d}_BCTHW.pt"

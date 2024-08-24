@@ -299,12 +299,13 @@ def main(cfg):
                     assert cfg.img_dropout_prob == 0 or cfg.img_dropout_prob==0.0,"TODO: refer to _backup/train_backup_before_remove_reweight_loss.py"
 
                     pL = prefix_len_sampler.random_choose(min_act_L)
-                    loss_mask = torch.zeros_like(x) # (bsz,c,f,h,w)
-                    mask_channel = torch.zeros_like(loss_mask[:,0:1,:,:1,:1]) # (bsz,1,f,1,1)
                     denoise_len = min(cfg.ar_size,min_act_L)
-                    loss_mask[:,:,pL:pL+denoise_len,:,:] = 1
-                    mask_channel[:,:,:pL,:,:] = 1
-                    
+                    x = x[:,:,:pL+denoise_len,:,:]  # (B,C,T,H,W); T=T_c+T_n = cond_len + chunk_len <= dataset.n_sample_frames
+                    loss_mask = torch.zeros_like(x) # (B,C,T,H,W)
+                    loss_mask[:,:,pL:,:,:] = 1 # only calculate loss for the denoise part
+                    mask_channel = torch.zeros_like(x[:,0:1,:,:1,:1]) # (bsz,1,f,1,1)
+                    mask_channel[:,:,:pL,:,:] = 1 # set 1 for cond, 0 for denoise chunk
+
                     model_kwargs.update(dict(
                         mask_channel = mask_channel, # (bsz,1,f,1,1)
                         loss_mask = loss_mask, # (bsz,c,f,h,w)

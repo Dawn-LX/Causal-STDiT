@@ -214,8 +214,10 @@ class CausalSTDiT2Block(nn.Module):
         mask_channel: (b,1,f,1,1): temporal mask channel (1 for prefix, 0 for noisy latent)
         '''
         B, N, C = x.shape
-        T, H, W = [self.input_size[i] // self.patch_size[i] for i in range(3)] # T: complete length of the entire sp_group
-        S = H *  W
+        H, W = [self.input_size[i] // self.patch_size[i] for i in [1,2]] # T: complete length of the entire sp_group
+        S = H * W
+        T = N // S
+        assert N % S == 0
 
         if self._enable_sequence_parallelism:
             sp_size = dist.get_world_size(get_sequence_parallel_group())
@@ -223,12 +225,10 @@ class CausalSTDiT2Block(nn.Module):
             T = T // sp_size
         
         if self.training:
-            assert N == T * S
+            pass
         else:
             # this is deprecated, use forward_kv_cache at inference time
             assert not self._enable_sequence_parallelism
-            # for auto-regressive inference, d_t changes at each auto-regre step
-            T = N // S # overwrite T
         
         # print(t.shape,self.scale_shift_table.shape)
         if t.ndim == 2:
@@ -501,7 +501,7 @@ class CausalSTDiT2(nn.Module):
         time_scale=1.0,
         temp_extra_in_channels = 0,
         temp_extra_in_all_block= False, # TODO ideally remove this, we always set False
-        temporal_max_len = 256, # auto-regression for max 256 frames (remove this when enable kv_cache dequeue)
+        temporal_max_len = 256, # max length of temporal position embedding (tpe), tpe idx that exceeds this will start cyclic shift
         relative_tpe_mode = None,
         freeze=None,
         enable_flashattn=False,
@@ -526,10 +526,9 @@ class CausalSTDiT2(nn.Module):
         self.input_size = input_size
         num_patches = np.prod([input_size[i] // patch_size[i] for i in range(3)])
         self.num_patches = num_patches
-        self.num_temporal = input_size[0] // patch_size[0]
-        # NOTE self.num_temporal should only be used for training, for auto-regre inference, num_temporal changes at each auto-regre step
-        # Thus, we decouple num_temporal & num_spatial
-        # self.num_spatial = num_patches // self.num_temporal
+        # self.num_temporal = input_size[0] // patch_size[0]
+        # NOTE in our setting, num_temporal is dynamic, we will compute `num_temporal` in each run
+
         self.num_spatial = (input_size[1] // patch_size[1]) * (input_size[2] // patch_size[2])
 
         self.num_heads = num_heads
@@ -732,7 +731,7 @@ class CausalSTDiT2(nn.Module):
     
     def _check_input_shape(self,x):
         b,c,t,h,w = x.shape
-        assert all(i==j for i,j in zip(x.shape[2:],self.input_size)), f"x.shape=={x.shape} != input_size=={self.input_size}"
+        assert tuple(self.input_size[1:]) == (h,w), f"x.shape=={x.shape}; input_size=={self.input_size}"
 
     def forward(self, x, timestep, y, mask=None, mask_channel=None, x_temporal_start=None):
         """
@@ -758,9 +757,7 @@ class CausalSTDiT2(nn.Module):
             '''
             if envs.DEBUG_COND_LEN:
                 cond_mask = mask_channel[0,0,:,0,0]
-                print(x.shape,cond_mask.sum(),cond_mask)
-            self._check_input_shape(x)
-            num_temporal = self.num_temporal
+                print(f"x.shape={x.shape}, cond_len={int(cond_mask.sum().item())}, cond_mask={cond_mask}")
         else:
             ''' for auto-regressive inference 
                 each auto-regre step has different `num_temporal`, e.g., T = 17
@@ -769,7 +766,7 @@ class CausalSTDiT2(nn.Module):
                 num_temporal == 17/1 == 17
                 num_spatial == (32/2)*(32/2) = 256
             '''
-            num_temporal = x.shape[2]
+            
             assert self.patch_size[0] == 1, "TODO, consdier temporal patchify for auto-regre infer"
             if self._kv_cache_registered:
                 # add this, so that we donot call `forward_kv_cache` outside the model
@@ -778,6 +775,8 @@ class CausalSTDiT2(nn.Module):
 
         device = self.x_embedder.proj.weight.device
         dtype = self.x_embedder.proj.weight.dtype
+        self._check_input_shape(x)
+        num_temporal = x.shape[2]
 
         x = x.to(dtype)
         timestep = timestep.to(dtype)
@@ -836,11 +835,7 @@ class CausalSTDiT2(nn.Module):
 
         # final process
         x = self.final_layer(x, t,num_temporal=num_temporal)  # [B, N, C=T_p * H_p * W_p * C_out]
-        if self.training:
-            input_size = self.input_size
-        else:
-            input_size = (num_temporal, self.input_size[1], self.input_size[2])
-        
+        input_size = (num_temporal, self.input_size[1], self.input_size[2])
         x = self.unpatchify(x,input_size)  # [B, C_out, T, H, W]
         
 
