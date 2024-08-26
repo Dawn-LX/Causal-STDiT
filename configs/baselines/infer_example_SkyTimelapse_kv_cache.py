@@ -48,29 +48,5 @@ examples = [
         auto_regre_steps=20,
         seed = 666
     ),
-    dict(
-        prompt =  None,
-        first_image =  f"{_VAL_DATA_ROOT}/07U1fSrk9oI/07U1fSrk9oI_1/07U1fSrk9oI_frames_00000046.jpg",
-
-        # the following configs will over-write those in `sample_cfgs`:
-        auto_regre_steps=20,
-        seed = 777
-    ),
-    dict(
-        prompt =  None,
-        first_image =  f"{_VAL_DATA_ROOT}/07U1fSrk9oI/07U1fSrk9oI_1/07U1fSrk9oI_frames_00000046.jpg",
-
-        # the following configs will over-write those in `sample_cfgs`:
-        auto_regre_steps=20,
-        seed = 888
-    ),
-    dict(
-        prompt =  None,
-        first_image =  f"{_VAL_DATA_ROOT}/07U1fSrk9oI/07U1fSrk9oI_1/07U1fSrk9oI_frames_00000046.jpg",
-
-        # the following configs will over-write those in `sample_cfgs`:
-        auto_regre_steps=20,
-        seed = 999
-    ),
     
 ]

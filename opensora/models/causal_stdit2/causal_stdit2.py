@@ -501,7 +501,8 @@ class CausalSTDiT2(nn.Module):
         time_scale=1.0,
         temp_extra_in_channels = 0,
         temp_extra_in_all_block= False, # TODO ideally remove this, we always set False
-        temporal_max_len = 256, # max length of temporal position embedding (tpe), tpe idx that exceeds this will start cyclic shift
+        max_tpe_len = 64,  # max length of temporal position embedding (tpe), tpe idx that exceeds this will start cyclic shift
+        temporal_max_len = None, # this deprecated, now we use max_tpe_len
         relative_tpe_mode = None,
         freeze=None,
         enable_flashattn=False,
@@ -542,7 +543,11 @@ class CausalSTDiT2(nn.Module):
 
         assert relative_tpe_mode in ["offset","sample","cyclic",None] # use cyclic for infinite auto-regre generation
         self.relative_tpe_mode  = relative_tpe_mode
-        self.temporal_max_len = temporal_max_len
+        if temporal_max_len is not None:
+            # support for old-version code
+            max_tpe_len = temporal_max_len
+
+        self.max_tpe_len = max_tpe_len
 
         self.register_buffer("pos_embed", self.get_spatial_pos_embed())
         self.register_buffer("pos_embed_temporal", self.get_temporal_pos_embed())
@@ -619,7 +624,7 @@ class CausalSTDiT2(nn.Module):
 
     def get_relative_tpe(self,chunk_len,chunk_start_idx=None,with_kv_cache=False):
         mode = self.relative_tpe_mode
-        max_tpe_len = self.pos_embed_temporal.shape[1] # i.e., self.temporal_max_len
+        max_tpe_len = self.pos_embed_temporal.shape[1] # i.e., self.max_tpe_len
         assert chunk_len <= max_tpe_len
         '''
         (full-attn,causal-attn) fixed tpe w/o kv-cache
@@ -668,13 +673,23 @@ class CausalSTDiT2(nn.Module):
         elif mode == "cyclic":
             if self.training:
                 assert chunk_start_idx is None or chunk_start_idx == 0
-                tpe_start = random.randint(0,max_tpe_len-1)
+                if chunk_len < self.max_tpe_len:
+                    tpe_start = 0
+                    # NOTE cyclic shift only happens when generated seq > max_tpe_len
+                    # so we do not train the model to fit cyclic shifted tpe for short frame seq
+                else:
+                    tpe_start = random.randint(0,max_tpe_len-1) 
+                    # NOTE chunk_len 固定为8的时候，每次random start的id并不总是 0,8,24,32,(再下一个ar-step start_id=1)
+                    # i.e., tpe_start_choices = [0, 8, 16, 24, 32, 1, 9, 17, 25,  ...]
+                    # refer to `tests/debug_tpe_cyclic_shift.py`
             else:
                 tpe_start = chunk_start_idx
             
             tpe_ids = [i % max_tpe_len for i in range(tpe_start,tpe_start+chunk_len)]
             # print(tpe_ids, max_tpe_len, self.pos_embed_temporal)
             tpe = self.pos_embed_temporal[:,tpe_ids,:]
+            if envs.DEBUG_COND_LEN:
+                print(f"chunk_len={chunk_len},random_tpe_start={tpe_start},tpe_ids={tpe_ids}")
         else:
             raise NotImplementedError(f"rel_tpe_mode={mode} is not implemented")
 
@@ -685,12 +700,12 @@ class CausalSTDiT2(nn.Module):
         
     def get_relative_tpe0(self,num_temporal):
         seq_length = num_temporal
-        max_length = self.temporal_max_len
+        max_tpe_len = self.max_tpe_len
         mode = self.relative_tpe_mode
         device = self.pos_embed_temporal.device
 
-        # temporal_index_condition = [i % temporal_max_len for i in range(temporal_start,temporal_start+T_c)]
-        # temporal_index_target = [i % temporal_max_len for i in range(temporal_start+T_c,temporal_start+T_c+T)]
+        # temporal_index_condition = [i % max_tpe_len for i in range(temporal_start,temporal_start+T_c)]
+        # temporal_index_target = [i % max_tpe_len for i in range(temporal_start+T_c,temporal_start+T_c+T)]
 
         # tpe_condition = ""
         # tpe_target = ""
@@ -757,7 +772,7 @@ class CausalSTDiT2(nn.Module):
             '''
             if envs.DEBUG_COND_LEN:
                 cond_mask = mask_channel[0,0,:,0,0]
-                print(f"x.shape={x.shape}, cond_len={int(cond_mask.sum().item())}, cond_mask={cond_mask}")
+                # print(f"x.shape={x.shape}, cond_len={int(cond_mask.sum().item())}, cond_mask={cond_mask}")
         else:
             ''' for auto-regressive inference 
                 each auto-regre step has different `num_temporal`, e.g., T = 17
@@ -1219,7 +1234,7 @@ class CausalSTDiT2(nn.Module):
         assert self.patch_size[0] ==1
         pos_embed = get_1d_sincos_pos_embed(
             self.hidden_size,
-            self.temporal_max_len,
+            self.max_tpe_len,
             scale=self.time_scale,
         )
         pos_embed = torch.from_numpy(pos_embed).float().unsqueeze(0).requires_grad_(False)

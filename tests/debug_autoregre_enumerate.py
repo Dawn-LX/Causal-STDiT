@@ -109,14 +109,26 @@ w/ kv-cache
         tpe    >> cond:      [8][9-16][17-24][25-32] denoise [0 - 7]   <--- this is seen in training
 
     ar_step=5
-        latent >> cond: [16][17-24][25-32][33-40] denoise [41-48]
-        tpe    >> cond: [16][17-24][25-32][0 - 7] denoise [8 -15] <--- this is seen in training
+        latent >> cond:     <0-15>[16][17-24][25-32][33-40] denoise [41-48]
+        tpe    >> cond:           [16][17-24][25-32][0 - 7] denoise [8 -15] <--- this is seen in training
+    
+    ar_step=6
+        latent >> cond:            <0-23>[24][25-32][33-40][41-48] denoise [49-56]
+        tpe    >> cond:                  [24][25-32][0 - 7][8 -15] denoise [16-23] <--- this is seen in training
+
+    ar_step=7
+        latent >> cond:                   <0-31>[32][33-40][41-48][49-56] denoise [57-64]
+        tpe    >> cond:                         [32][0 - 7][8 -15][16-23] denoise [24-31] <--- this is seen in training
+    
+    ar_step=8
+        latent >> cond:                          <0-39>[40][41-48][49-56][57-64] denoise [65 -72]
+        tpe    >> cond:                                [ 7][8 -15][16-23][24-31] denoise [32,0-6] <--- this is seen in training
 
 
-w/o kv-cache (tpe's cyclic shift will not happen)
+w/o kv-cache (tpe's cyclic shift will not happen) # w/o kv-cache 的第8帧是不带有前面0-7的信息的，让第8帧含有0-7的信息这件事情，是在write_latent_to_cache的时候发生的
     ar_step=0 
         latent >> cond: [0] denoise: [1-8]
-        tpe >>    cond: [8] denoise: [1-8]
+        tpe >>    cond: [0] denoise: [1-8]
     
     ar_step=1 
         latent >> cond: [0][1-8] denoise [9-16]

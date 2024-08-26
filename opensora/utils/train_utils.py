@@ -4,6 +4,10 @@ from collections import OrderedDict
 
 import torch
 
+import colossalai
+COLOSSALAI_VERSION = str(colossalai.__version__).split('.') # '0.4.0', '0.4.1', '0.4.2'
+assert len(COLOSSALAI_VERSION)==3
+COLOSSALAI_VERSION = float('.'.join(COLOSSALAI_VERSION[1:])) # 4.0, 4.1, 4.2
 
 @torch.no_grad()
 def update_ema(
@@ -26,7 +30,10 @@ def update_ema(
         else:
             if param.data.dtype != torch.float32:
                 param_id = id(param)
-                master_param = optimizer._param_store.working_to_master_param[param_id]
+                if COLOSSALAI_VERSION < 4.2:
+                    master_param = optimizer._param_store.working_to_master_param[param_id] # for colossalai==0.4.0
+                else:
+                    master_param = optimizer.working_to_master_param[param_id] # for colossalai=0.4.2
                 param_data = master_param.data
             else:
                 param_data = param.data
