@@ -79,6 +79,10 @@ w/o kv-cache
     ar_step=4 
         latent >> cond: [8][9-16][17-24][25-32] denoise [33-40]
         tpe    >> cond: [0][1-8][9-16][17-24]   denoise [25-32]
+    
+    ar_step=5
+        latent >> cond: [16][17-24][25-32][33-40] denoise [41-48]
+        tpe    >> cond: [0 ][1 - 8][9 -16][17-24] denoise [25-32]
 '''
 
 
