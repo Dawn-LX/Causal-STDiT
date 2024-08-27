@@ -172,7 +172,7 @@ class Attention(nn.Module):
         qkv = self.qkv(x)
         qkv_shape = (B, N, 3, self.num_heads, self.head_dim)
 
-        qkv = qkv.view(qkv_shape).permute(2, 0, 3, 1, 4)
+        qkv = qkv.view(qkv_shape).permute(2, 0, 3, 1, 4) # (3, B, nheads, seqlen, dim)
         q, k, v = qkv.unbind(0)
         # WARNING: this may be a bug
         if self.rope:

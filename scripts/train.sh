@@ -1,17 +1,24 @@
-export CODE_ROOT="/home/gkf/project/CausalSTDiT"
-export PYTHONPATH=$PYTHONPATH:$CODE_ROOT
 
-cd $CODE_ROOT
-pwd
 
 if test -d "/data"; then
     # for server 10.130.129.11
-    ROOT_OUTPUT_DIR="/data/CausalSTDiT_working_dir"
+    export CODE_ROOT="/home/gkf/project/CausalSTDiT"
+    
+    export ROOT_CKPT_DIR="/home/gkf/LargeModelWeightsFromHuggingFace"
+    export ROOT_DATA_DIR="/data"
+    export ROOT_OUTPUT_DIR="/data/CausalSTDiT_working_dir"
 else
     # for server 10.130.129.34
-    ROOT_OUTPUT_DIR="/data9T/gaokaifeng/CausalSTDiT_working_dir"
+    export CODE_ROOT="/data9T/gaokaifeng/project/CausalSTDiT"
+
+    export ROOT_CKPT_DIR="/data9T/gaokaifeng/LargeModelWeightsFromHuggingFace"
+    export ROOT_DATA_DIR="/data9T/gaokaifeng/datasets"
+    export ROOT_OUTPUT_DIR="/data9T/gaokaifeng/CausalSTDiT_working_dir"
 fi
 
+export PYTHONPATH=$PYTHONPATH:$CODE_ROOT
+cd $CODE_ROOT
+pwd
 
 
 CFG_PATH=${1}
@@ -72,10 +79,6 @@ _ROOT_DATA_DIR = os.getenv("ROOT_DATA_DIR","/data")  #
     TODO \
     9686 0
 
-    # causla attn cyclic tpe
-    bash scripts/train.sh \
-    TODO \
-    9686 0
 
     # partial causal attn cyclic tpe
     bash scripts/train.sh \
@@ -83,4 +86,9 @@ _ROOT_DATA_DIR = os.getenv("ROOT_DATA_DIR","/data")  #
     exp5_partial_causal_CfattnPp3_tpe33 \
     9686 0
 
+    # causla attn cyclic tpe
+    bash scripts/train.sh \
+    configs/ablations_on_SkyTimelapse/exp6_purecausal_attn_cyclic_tpe33.py \
+    exp6_pure_causal_CfattnPp3_tpe33
+    9686 1
 comment
