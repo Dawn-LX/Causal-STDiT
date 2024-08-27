@@ -77,6 +77,7 @@ class AttentionWithContext(nn.Module):
         norm_layer: nn.Module = LlamaRMSNorm,
         enable_flash_attn: bool = False,
         is_causal:  Union[bool,str] = False,  # True, False, or "partial"
+        rope = None, # In our setting, we apply RoPE for temporal attention
     ) -> None:
         super().__init__()
         assert dim % num_heads == 0, "dim should be divisible by num_heads"
@@ -94,6 +95,7 @@ class AttentionWithContext(nn.Module):
         self.proj_drop = nn.Dropout(proj_drop)
 
         self.is_causal = is_causal
+        self.rope = rope
 
     def forward(self, x: torch.Tensor, context: torch.Tensor = None, is_ctx_as_kv = False, return_kv=False,**kwargs) -> torch.Tensor:
         B, N, C = x.shape
@@ -143,7 +145,11 @@ class AttentionWithContext(nn.Module):
                 _,k,v = qkv.unbind(0) # overwrite k/v
                         
                         
-            
+        if self.rope is not None:
+            # refer to RotaryEmbForCacheQueue
+            # we apply RoPE after fetch kv-cache, i.e., we wrote kv-cache w/o RoPE
+            q,k = self.rope(q,k)
+
         q, k = self.q_norm(q), self.k_norm(k)
 
         if self.enable_flash_attn:

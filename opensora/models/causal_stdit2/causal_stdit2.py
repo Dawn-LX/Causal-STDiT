@@ -1,4 +1,5 @@
 import random
+import functools
 from typing import Union,Optional,List,Dict
 import numpy as np
 import torch
@@ -26,6 +27,7 @@ from opensora.models.layers.blocks import (
 )
 from opensora.registry import MODELS
 from opensora.utils.ckpt_utils import load_checkpoint
+from opensora.utils.rope_llama_src import precompute_freqs_cis,apply_rotary_emb_q_or_k
 
 from .attention import (
     AttentionWithContext,
@@ -57,6 +59,55 @@ def _init_linear_eye(layer):
     extra_in_channels = ch_in - ch_out
     eye_ = torch.eye(ch_out,dtype=dtype,device=device)
     layer.weight[:,:ch_out] = eye_
+
+
+
+class RotaryEmbForCacheQueue(nn.Module):
+    def __init__(self,dim_per_attn_head,max_length) -> None:
+        super().__init__()
+
+        self.freqs = precompute_freqs_cis(dim_per_attn_head,max_length)
+        self.q_start = 0
+    
+    def set_attn_q_start(self,q_start):
+        self.q_start = q_start
+
+    def forward(self,q,k):
+        '''
+        this func is designed for RoPE w/ kv-cache and w/ kv-cache dequeue
+        it will be called inside Attention's forward
+
+        Args:
+            q (torch.Tensor): (bsz,len_q,n_heads,head_dim)
+            k (torch.Tensor): (bsz,len_k,n_heads,head_dim)
+            q_start (int): 
+
+        Returns:
+            RoPE applied q, k
+        '''
+
+        q_len,k_len = q.shape[1],k.shape[1]
+        maxL = self.freqs.shape[0]
+
+        freqs_k = self.freqs[0:k_len]
+        k = apply_rotary_emb_q_or_k(k,freqs_k)
+        
+        q_start = 0 if self.training else self.q_start
+        q_end = min(q_start+q_len,maxL)
+        '''
+        e.g., 
+        for training:
+            q_start = 0 = k_start, q_len <= max_seqlen_train == max_tpe_len
+
+        for auto-regre infer w/ kv-cache
+            q_start = 1, 9, 17, 25, ... for forward w/ kv-cache; q_len=8 (denoise chunk_len)
+            or q_start=0 and q_len=1 for writing 1st frame to kv-cache
+        '''
+        freqs_q = self.freqs[q_end-q_len:q_end]
+        q = apply_rotary_emb_q_or_k(q,freqs_q)
+        
+        return q,k
+
 
 class TimestepEmbedderExpand(TimestepEmbedder):
     def forward(self,t, dtype):
@@ -122,9 +173,9 @@ class CausalSTDiT2Block(nn.Module):
         enable_layernorm_kernel=False,
         enable_sequence_parallelism=False,
         spatial_attn_enhance = None,
-        t_win_size : int = 0,
         is_causal: bool = True, # set it to False for ablation
         with_cross_attn = True,
+        rope : Optional[RotaryEmbForCacheQueue] = None,
         _block_idx = -1, # for debug
     ):
         super().__init__()
@@ -140,7 +191,6 @@ class CausalSTDiT2Block(nn.Module):
         if spatial_attn_enhance is not None:
             self.spatial_attn_ctx_len = 1 if spatial_attn_enhance=="first_frame" else int(spatial_attn_enhance.split('_')[-1]) # e.g., prev_frames_3
         
-        self.t_win_size = t_win_size
         self.input_size = input_size
         self.patch_size = patch_size
 
@@ -175,7 +225,8 @@ class CausalSTDiT2Block(nn.Module):
             num_heads=num_heads,
             qkv_bias=True,
             enable_flash_attn=self.enable_flashattn,
-            is_causal = self.is_causal
+            is_causal = self.is_causal,
+            rope = rope
         )
 
         if self.spatial_attn_enhance is not None:
@@ -186,25 +237,13 @@ class CausalSTDiT2Block(nn.Module):
                 enable_flash_attn=self.enable_flashattn,
                 is_causal = False
             )
-        if t_win_size > 0:
-            self.attn_temp_window = temp_attn_cls(
-                hidden_size,
-                num_heads = num_heads,
-                qkv_bias=True,
-                enable_flash_attn=self.enable_flashattn,
-                is_causal =  self.is_causal
-            )
+
         
         self.temp_extra_in_channels = temp_extra_in_channels
         if self.temp_extra_in_channels > 0:
             self.attn_temp_pre_merge = nn.Linear(
                 hidden_size + temp_extra_in_channels, hidden_size, bias=True
             )
-
-    def collect_temporal_context(self,x,bthwc):
-        pass # TODO
-
-
 
     def forward(self, x, y, t, mask=None, tpe=None, mask_channel=None):
         '''
@@ -324,10 +363,6 @@ class CausalSTDiT2Block(nn.Module):
         x_t = rearrange(x_t, "(B S) T C -> B (T S) C", T=T, S= S)
         x = x + self.drop_path(gate_msa * x_t)
 
-        if self.t_win_size > 0:
-            # TODO window temporal attn, collect temporal context for temporal attn
-            pass
-        
         # cross attn
         if self.with_cross_attn:
             x = x + self.cross_attn(x, y, mask)
@@ -510,13 +545,15 @@ class CausalSTDiT2(nn.Module):
         enable_sequence_parallelism=False,
         spatial_attn_enhance = None,
         cross_frame_attn:str = None,
-        t_win_size : int = 0,
         is_causal: bool = True,
     ):
         super().__init__()
         if (cross_frame_attn is not None) and (spatial_attn_enhance is None):
             # support old-version code
             spatial_attn_enhance = cross_frame_attn.replace("prev_prefix_","prev_frames_")
+        if temporal_max_len is not None:
+            # support for old-version code
+            max_tpe_len = temporal_max_len
 
         self.is_causal = is_causal
         self.pred_sigma = pred_sigma
@@ -541,12 +578,11 @@ class CausalSTDiT2(nn.Module):
         self.space_scale = space_scale
         self.time_scale = time_scale
 
-        assert relative_tpe_mode in ["offset","sample","cyclic",None] # use cyclic for infinite auto-regre generation
+        assert relative_tpe_mode in ["offset","sample","cyclic","rope",None] # use cyclic for infinite auto-regre generation
         self.relative_tpe_mode  = relative_tpe_mode
-        if temporal_max_len is not None:
-            # support for old-version code
-            max_tpe_len = temporal_max_len
-
+        if relative_tpe_mode == "rope":
+            self.rope = RotaryEmbForCacheQueue(self.hidden_size//self.num_heads,max_tpe_len)
+            
         self.max_tpe_len = max_tpe_len
 
         self.register_buffer("pos_embed", self.get_spatial_pos_embed())
@@ -584,7 +620,6 @@ class CausalSTDiT2(nn.Module):
                     enable_sequence_parallelism=enable_sequence_parallelism,
                     temp_extra_in_channels = temp_extra_in_channels if (i==0 or temp_extra_in_all_block) else 0,
                     spatial_attn_enhance=spatial_attn_enhance,
-                    t_win_size = t_win_size,
                     is_causal= is_causal,
                     with_cross_attn =  caption_channels > 0,
                     _block_idx = i
@@ -690,6 +725,16 @@ class CausalSTDiT2(nn.Module):
             tpe = self.pos_embed_temporal[:,tpe_ids,:]
             if envs.DEBUG_COND_LEN:
                 print(f"chunk_len={chunk_len},random_tpe_start={tpe_start},tpe_ids={tpe_ids}")
+        elif mode == "rope":
+            if self.training:
+                assert chunk_start_idx is None or chunk_start_idx == 0
+                assert self.rope.q_start == 0
+            else:
+                # chunk_start_idx can be 0, 1, 9, 17, 25,33,41,...
+                self.rope.set_attn_q_start(chunk_start_idx)
+            
+            # we will apple RoPE inside the Attention's forward
+            return None
         else:
             raise NotImplementedError(f"rel_tpe_mode={mode} is not implemented")
 
@@ -698,52 +743,7 @@ class CausalSTDiT2(nn.Module):
         return tpe
 
         
-    def get_relative_tpe0(self,num_temporal):
-        seq_length = num_temporal
-        max_tpe_len = self.max_tpe_len
-        mode = self.relative_tpe_mode
-        device = self.pos_embed_temporal.device
-
-        # temporal_index_condition = [i % max_tpe_len for i in range(temporal_start,temporal_start+T_c)]
-        # temporal_index_target = [i % max_tpe_len for i in range(temporal_start+T_c,temporal_start+T_c+T)]
-
-        # tpe_condition = ""
-        # tpe_target = ""
-
-
-        if mode == "offset":
-            if self.training:
-                offset = torch.randint(0,max_length-seq_length,size=(),device=device)
-                assert offset + seq_length < max_length
-                rel_tpe = self.pos_embed_temporal[:,offset:offset+seq_length,:]
-            else:
-                rel_tpe = self.pos_embed_temporal[:,:seq_length,:]
-        elif mode == "cyclic":
-            if self.training:
-                assert seq_length <= max_length
-                offset = torch.randint(0,max_length,size=(),device=device)  # offset = offset % max_length
-                rel_tpe = torch.cat(
-                    [self.pos_embed_temporal,self.pos_embed_temporal],
-                    dim=1
-                )[:,offset:offset+seq_length,:]
-            else:
-                rel_tpe = torch.cat(
-                    [self.pos_embed_temporal] * (seq_length // max_length + 1),
-                    dim=1
-                )[:, :seq_length,:]
-                # NOTE: for very long seq_length, we should dequeue previous kv-cache to save memory
-        elif mode == "sample":
-            ids = torch.randperm(max_length)[:seq_length].to(device)
-            rel_tpe = self.pos_embed_temporal[:,ids,:]
-        elif mode is None:
-            # use abs tpe
-            rel_tpe = self.pos_embed_temporal[:,:seq_length,:]
-        else:
-            raise NotImplementedError(f"rel_tpe_mode={mode} is not implemented")
-        
-        # print(self.relative_tpe_mode,rel_tpe.shape,self.pos_embed_temporal.shape)
-        return rel_tpe
-    
+ 
     def _check_input_shape(self,x):
         b,c,t,h,w = x.shape
         assert tuple(self.input_size[1:]) == (h,w), f"x.shape=={x.shape}; input_size=={self.input_size}"
@@ -829,7 +829,7 @@ class CausalSTDiT2(nn.Module):
                     assert x_temporal_start is not None
                 tpe = self.get_relative_tpe(
                     chunk_len= num_temporal,
-                    chunk_start_idx = x_temporal_start, # only used for cyclic tpe
+                    chunk_start_idx = x_temporal_start,
                     with_kv_cache=False
                 )
                 
@@ -1051,7 +1051,7 @@ class CausalSTDiT2(nn.Module):
         # build timestep embedding with all t0's embedding
         # build mask_channel with all ones
         '''
-        assert self.relative_tpe_mode in ["offset","cyclic",None], "# noqa for relative tpe mode == sample"
+        
         device = self.x_embedder.proj.weight.device
         dtype = self.x_embedder.proj.weight.dtype
         

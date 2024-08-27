@@ -1,7 +1,7 @@
 import torch
 from rotary_embedding_torch import RotaryEmbedding
 from flash_attn import flash_attn_func
-from opensora.utils.rope_llama_src import precompute_freqs_cis,apply_rotary_emb
+from opensora.utils.rope_llama_src import precompute_freqs_cis,apply_rotary_emb_q_or_k
 
 
 def run_attn(use_rope=True):
@@ -67,13 +67,13 @@ def run_attn_LlamaRoPE(use_rope=True):
         
         maxL = freqs.shape[0]
         freqs_k = freqs[0:k_len]
-        k = apply_rotary_emb(k,freqs_k)
+        k = apply_rotary_emb_q_or_k(k,freqs_k)
         
         for q_start in [1,9,17,25,33,41]:
             q_end = min(q_start+q_len,maxL)
             freqs_q = freqs[q_end-q_len:q_end]
             print(f"q range : [{q_end-q_len}:{q_end}], freqs_q:{freqs_q.shape}")
-            q = apply_rotary_emb(q,freqs_q)
+            q = apply_rotary_emb_q_or_k(q,freqs_q)
         
         q_start=0
         q_len=1
@@ -81,7 +81,7 @@ def run_attn_LlamaRoPE(use_rope=True):
         q_end = min(q_start+q_len,maxL)
         freqs_q = freqs[q_end-q_len:q_end]
         print(f"q range : [{q_end-q_len}:{q_end}], freqs_q:{freqs_q.shape}")
-        q = apply_rotary_emb(q,freqs_q)
+        q = apply_rotary_emb_q_or_k(q,freqs_q)
 
     
     x = flash_attn_func(

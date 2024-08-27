@@ -54,7 +54,7 @@ def reshape_for_broadcast(freqs_cis: torch.Tensor, x: torch.Tensor):
     return freqs_cis.view(*shape)
 
 
-def apply_rotary_emb_q_and_k(
+def apply_rotary_emb(
     xq: torch.Tensor, # (bsz,seqlen,n_heads,head_dim)
     xk: torch.Tensor,
     freqs_cis: torch.Tensor,
@@ -86,13 +86,13 @@ def apply_rotary_emb_q_and_k(
     return xq_out.type_as(xq), xk_out.type_as(xk)
 
 
-def apply_rotary_emb(
+def apply_rotary_emb_q_or_k(
     q_or_k: torch.Tensor, # (bsz,seqlen,n_heads,head_dim)
     freqs_cis: torch.Tensor, # (seqlen, head_dim)
 ) -> Tuple[torch.Tensor, torch.Tensor]:
     """
     Apply rotary embeddings to input tensors using the given frequency tensor.
-    modified based on `apply_rotary_emb_q_and_k`
+    modified based on `apply_rotary_emb`
 
     Args:
         q_or_k (torch.Tensor): (bsz,seqlen,n_heads,head_dim)

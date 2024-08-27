@@ -61,13 +61,12 @@ model = dict(
     caption_channels = 0,
     temp_extra_in_channels = 1,
     temp_extra_in_all_block = False,
-    temporal_max_len = 33,
+    max_tpe_len = 33,
     relative_tpe_mode = "cyclic",
     enable_flashattn = True,
     enable_layernorm_kernel = False,
     enable_sequence_parallelism = False,
     cross_frame_attn = "prev_prefix_3",
-    t_win_size = 0,
 )
 
 vae = dict(
