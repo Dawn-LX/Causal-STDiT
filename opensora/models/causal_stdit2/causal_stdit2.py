@@ -66,7 +66,8 @@ class RotaryEmbForCacheQueue(nn.Module):
     def __init__(self,dim_per_attn_head,max_length) -> None:
         super().__init__()
 
-        self.freqs = precompute_freqs_cis(dim_per_attn_head,max_length)
+        freqs = precompute_freqs_cis(dim_per_attn_head,max_length)
+        self.register_buffer("freqs",freqs,persistent=False)
         self.q_start = 0
     
     def set_attn_q_start(self,q_start):
@@ -93,6 +94,8 @@ class RotaryEmbForCacheQueue(nn.Module):
         k = apply_rotary_emb_q_or_k(k,freqs_k)
         
         q_start = 0 if self.training else self.q_start
+        if envs.DEBUG_ROPE:
+            print(f"self.training={self.training}, q_start={q_start}")
         q_end = min(q_start+q_len,maxL)
         '''
         e.g., 
@@ -622,6 +625,7 @@ class CausalSTDiT2(nn.Module):
                     spatial_attn_enhance=spatial_attn_enhance,
                     is_causal= is_causal,
                     with_cross_attn =  caption_channels > 0,
+                    rope = self.rope if relative_tpe_mode == "rope" else None,
                     _block_idx = i
                 )
                 for i in range(self.depth)
@@ -728,7 +732,6 @@ class CausalSTDiT2(nn.Module):
         elif mode == "rope":
             if self.training:
                 assert chunk_start_idx is None or chunk_start_idx == 0
-                assert self.rope.q_start == 0
             else:
                 # chunk_start_idx can be 0, 1, 9, 17, 25,33,41,...
                 self.rope.set_attn_q_start(chunk_start_idx)
