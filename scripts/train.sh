@@ -7,6 +7,7 @@ if test -d "/data"; then
     export ROOT_CKPT_DIR="/home/gkf/LargeModelWeightsFromHuggingFace"
     export ROOT_DATA_DIR="/data"
     export ROOT_OUTPUT_DIR="/data/CausalSTDiT_working_dir"
+    echo "on server A100"
 else
     # for server 10.130.129.34
     export CODE_ROOT="/data9T/gaokaifeng/project/CausalSTDiT"
@@ -14,6 +15,7 @@ else
     export ROOT_CKPT_DIR="/data9T/gaokaifeng/LargeModelWeightsFromHuggingFace"
     export ROOT_DATA_DIR="/data9T/gaokaifeng/datasets"
     export ROOT_OUTPUT_DIR="/data9T/gaokaifeng/CausalSTDiT_working_dir"
+    echo "on server A6000"
 fi
 
 export PYTHONPATH=$PYTHONPATH:$CODE_ROOT
@@ -76,7 +78,8 @@ _ROOT_DATA_DIR = os.getenv("ROOT_DATA_DIR","/data")  #
 
     # full-attn fixed tpe
     bash scripts/train.sh \
-    TODO \
+    configs/ablations_on_SkyTimelapse/exp7_fullattn_fixed_tpe33.py \
+    exp7_fullattn_CfattnPp3_fixed_tpe33 \
     9686 0
 
 
@@ -86,9 +89,16 @@ _ROOT_DATA_DIR = os.getenv("ROOT_DATA_DIR","/data")  #
     exp5_partial_causal_CfattnPp3_tpe33 \
     9686 0
 
-    # causla attn cyclic tpe
+    # pure causal attn cyclic tpe
     bash scripts/train.sh \
     configs/ablations_on_SkyTimelapse/exp6_purecausal_attn_cyclic_tpe33.py \
     exp6_pure_causal_CfattnPp3_tpe33
     9686 1
+
+    # pure causal  RoPE
+    bash scripts/train.sh \
+    configs/ablations_on_SkyTimelapse/exp9_purecausal_attn_rope33.py \
+    exp9_purecausal_CfattnPp3_rope33 \
+    9686 1
+
 comment

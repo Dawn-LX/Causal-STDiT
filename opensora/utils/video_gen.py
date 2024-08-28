@@ -264,17 +264,17 @@ def autoregressive_sample(
         z_input = torch.cat([z_cond,init_noise_chunk],dim=2) # (B, C, T_c+T_n, H, W)
         if model.relative_tpe_mode != "cyclic":
             # make sure the temporal position emb not out of range
-            assert z_input.shape[2] <= model.temporal_max_len, f'''
+            assert z_input.shape[2] <= model.max_tpe_len, f'''
             max_condion_frames={max_condion_frames},
             cond_len: {z_cond.shape[2]}, denoise_len: {init_noise_chunk.shape[2]}
-            z_input_len = cond_len + denoise_len > model.temporal_max_len = {model.temporal_max_len}
+            z_input_len = cond_len + denoise_len > model.max_tpe_len = {model.max_tpe_len}
             temporal position embedding (tpe) will out of range !
             '''
             # this happens when (max_condion_frames-first_k_given) % chunk_len !=0, 
             # e.g., max_tpe_len=33, cond: [1,8,9,17,25], chunk_len=8, but we set max_condion_frames=27
         
         if model.relative_tpe_mode is None:
-            assert max_condion_frames + denoise_len == model.temporal_max_len 
+            assert max_condion_frames + denoise_len == model.max_tpe_len 
         # else:
         z_input_temporal_start = z_predicted.shape[2] - z_cond.shape[2]
         model_kwargs.update({"x_temporal_start":z_input_temporal_start})
