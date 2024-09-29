@@ -1,4 +1,4 @@
-_SKT_TIMELAPSE_ROOT = "/data/SkyTimelapse/sky_timelapse/sky_timelapse"
+_SKT_TIMELAPSE_ROOT = "/data/SkyTimelapse/sky_timelapse"
 _VAL_DATA_ROOT= f"{_SKT_TIMELAPSE_ROOT}/sky_test"
 
 
@@ -34,44 +34,22 @@ enable_flashattn = True
 
 # "first_image": "/home/gkf/project/CausalSTDiT/assets/videos/beach1.mp4.1st_frame.jpg"
 examples = [
-    # dict(
-    #     prompt =  None,
-    #     first_image =  f"{_VAL_DATA_ROOT}/07U1fSrk9oI/07U1fSrk9oI_1/07U1fSrk9oI_frames_00000046.jpg",
-
-    #     # the following configs will over-write those in `sample_cfgs`:
-    #     auto_regre_steps=10,
-    # ),
     dict(
         prompt =  None,
         first_image =  f"{_VAL_DATA_ROOT}/07U1fSrk9oI/07U1fSrk9oI_1/07U1fSrk9oI_frames_00000046.jpg",
 
         # the following configs will over-write those in `sample_cfgs`:
-        auto_regre_steps=10,
-        seed = 666
-    ),
-    # dict(
-    #     prompt =  None,
-    #     first_image =  f"{_VAL_DATA_ROOT}/07U1fSrk9oI/07U1fSrk9oI_1/07U1fSrk9oI_frames_00000046.jpg",
+        auto_regre_steps=20,
+        seed = 555
+    ), 
 
-    #     # the following configs will over-write those in `sample_cfgs`:
-    #     auto_regre_steps=20,
-    #     seed = 777
-    # ),
-    # dict(
-    #     prompt =  None,
-    #     first_image =  f"{_VAL_DATA_ROOT}/07U1fSrk9oI/07U1fSrk9oI_1/07U1fSrk9oI_frames_00000046.jpg",
-
-    #     # the following configs will over-write those in `sample_cfgs`:
-    #     auto_regre_steps=20,
-    #     seed = 888
-    # ),
-    # dict(
-    #     prompt =  None,
-    #     first_image =  f"{_VAL_DATA_ROOT}/07U1fSrk9oI/07U1fSrk9oI_1/07U1fSrk9oI_frames_00000046.jpg",
-
-    #     # the following configs will over-write those in `sample_cfgs`:
-    #     auto_regre_steps=20,
-    #     seed = 999
-    # ),
+    dict(
+        prompt =  None,
+        first_image =  f"{_VAL_DATA_ROOT}/LiWpE-zW14I/LiWpE-zW14I_1/LiWpE-zW14I_frames_00000871.jpg",
+        # the following configs will over-write those in `sample_cfgs`:
+        auto_regre_steps=20,
+        seed = 555
+    ),    
     
+   
 ]

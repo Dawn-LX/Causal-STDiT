@@ -231,8 +231,34 @@ parser.add_argument("--exp_dir",type=str, default="/data/CausalSTDiT_working_dir
         working_dirSampleOutput/overfit_beach_MaxCond25_partialCausalCyclic_with_kv_cache \
         9985 0
     
+###########################
+    # exp7  full-attn fixed tpe
+    bash scripts/inference2.sh \
+    configs/baselines/infer_example_SkyTimelapse_NoKVCache.py \
+    /data/CausalSTDiT_working_dir/exp7_fullattn_CfattnPp3_fixed_tpe33/training_config_backup.json2024-08-27T16-28-10.json \
+    /data/CausalSTDiT_working_dir/exp7_fullattn_CfattnPp3_fixed_tpe33/epoch3-global_step13000 \
+    working_dirSampleOutput/exp7_fullattn_CfattnPp3_fixed_tpe33 \
+    9985 0
 
 
+    # exp5 partial causal cyclic tpe
+    bash scripts/inference2.sh \
+    configs/baselines/infer_example_SkyTimelapse_NoKVCache.py \
+    /data/CausalSTDiT_working_dir/exp5_partial_causal_CfattnPp3_tpe33/training_config_backup.json2024-08-26T17-33-43.json \
+    /data/CausalSTDiT_working_dir/exp5_partial_causal_CfattnPp3_tpe33/epoch3-global_step14000 \
+    working_dirSampleOutput/exp5_partial_causal_CfattnPp3_tpe33_without_kvCache \
+    9988 0
+
+    # exp9 pure causal rope
+
+    bash scripts/inference2.sh \
+    configs/baselines/infer_example_SkyTimelapse_kv_cache.py \
+    /data/CausalSTDiT_working_dir/exp9_purecausal_CfattnPp3_rope33/training_config_backup.json2024-08-28T13-18-51.json \
+    /data/CausalSTDiT_working_dir/exp9_purecausal_CfattnPp3_rope33/epoch4-global_step20000 \
+    working_dirSampleOutput/exp9_purecausal_CfattnPp3_rope33_withKVCache \
+    9981 0
+
+    
 
 
 
