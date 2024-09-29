@@ -101,4 +101,10 @@ _ROOT_DATA_DIR = os.getenv("ROOT_DATA_DIR","/data")  #
     exp9_purecausal_CfattnPp3_rope33 \
     9686 1
 
+    # full attn RoPE
+    bash scripts/train.sh \
+    configs/ablations_on_SkyTimelapse/exp10_fullattn_rope33.py \
+    exp10_fullattn_CfattnPp3_rope33 \
+    9197 2
+
 comment
