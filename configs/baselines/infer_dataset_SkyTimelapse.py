@@ -1,6 +1,10 @@
-_SKT_TIMELAPSE_ROOT = "/data/SkyTimelapse/sky_timelapse"
-_VAL_DATA_ROOT= f"{_SKT_TIMELAPSE_ROOT}/sky_test"
 
+import os
+_ROOT_DATA_DIR = os.getenv("ROOT_DATA_DIR","/data")  #
+
+_SKT_TIMELAPSE_ROOT = f"{_ROOT_DATA_DIR}/SkyTimelapse/sky_timelapse" 
+# /data/SkyTimelapse/sky_timelapse or /data9T/gaokaifeng/datasets/SkyTimelapse/sky_timelapse
+_VAL_DATA_ROOT= f"{_SKT_TIMELAPSE_ROOT}/sky_test"
 
 val_data_cfg = dict(
     type="SkyTimelapseDatasetForEvalFVD",
@@ -48,7 +52,7 @@ sample_cfgs = dict(
 )
 
 max_condion_frames = 25
-enable_kv_cache = False
+enable_kv_cache = True
 if enable_kv_cache:
     kv_cache_dequeue = True
     kv_cache_max_seqlen = max_condion_frames
