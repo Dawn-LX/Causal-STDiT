@@ -19,7 +19,7 @@ torchrun \
     --nnodes=1 \
     --master-port=$MASTER_PORT \
     --nproc-per-node=$NUM_GPUS \
-    scripts/inference_dataset_ddp.py \
+    scripts/inference_dataset_ddp2.py \
     --config $ABS_CFG_PATH \
     --train_config $ABS_TRAIN_CFG \
     --ckpt_path $ABS_CKPT_PATH \
@@ -41,6 +41,16 @@ configs/causal_stdit/infer_dataset_SkyTimelapse.py \
 /data/CausalSTDiT_working_dir/CausalSTDiT2-XL2_33x256x256ArSize8pp3_timelapse/training_config_backup.json2024-08-01T16-33-58.json \
 /data/CausalSTDiT_working_dir/CausalSTDiT2-XL2_33x256x256ArSize8pp3_timelapse/epoch1-global_step14000 \
 /data/CausalSTDiT_working_dir/debug_inference \
+ 9986 0
+
+
+#### exp7 full-attn fixed tpe33 (new version, i.e., use iddpm rather than CleanPrefixIDDPM, and use inference_dataset_ddp2.py)
+
+bash /home/gkf/project/CausalSTDiT/scripts/inference_dataset_ddp.sh \
+configs/baselines/infer_dataset_SkyTimelapse.py \
+/data/CausalSTDiT_working_dir/exp7_fullattn_CfattnPp3_fixed_tpe33/training_config_backup.json2024-08-27T16-28-10.json \
+/data/CausalSTDiT_working_dir/exp7_fullattn_CfattnPp3_fixed_tpe33/epoch3-global_step13000 \
+/data/CausalSTDiT_working_dir/exp7_ddp_sample_17x256x256 \
  9986 0
 
 comment
