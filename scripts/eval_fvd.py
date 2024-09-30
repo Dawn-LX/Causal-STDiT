@@ -152,11 +152,17 @@ def gen_data_demo():
     print(len(gen_dataset))
 
 def get_gt_dataset_configs(idx):
+    _ROOT_DATA_DIR = os.getenv("ROOT_DATA_DIR","/data")  #
+
+    _SKT_TIMELAPSE_ROOT = f"{_ROOT_DATA_DIR}/SkyTimelapse/sky_timelapse" 
+    # /data/SkyTimelapse/sky_timelapse or /data9T/gaokaifeng/datasets/SkyTimelapse/sky_timelapse
+    _VAL_DATA_ROOT= f"{_SKT_TIMELAPSE_ROOT}/sky_test"
+
     SKY_TIMELAPSE_DATASET = {
         1:dict(
             type="SkyTimelapseDatasetForEvalFVD",
             
-            root="/data/SkyTimelapse/sky_timelapse/sky_timelapse/sky_test",
+            root=_VAL_DATA_ROOT,
             n_sample_frames = 16,
             image_size=(256,256),
             read_video = True,
@@ -167,7 +173,7 @@ def get_gt_dataset_configs(idx):
         2:dict(
             type="SkyTimelapseDatasetForEvalFVD",
             
-            root="/data/SkyTimelapse/sky_timelapse/sky_timelapse/sky_test",
+            root=_VAL_DATA_ROOT,
             n_sample_frames = 16,
             image_size=(256,256),
             read_video = True,
@@ -179,7 +185,7 @@ def get_gt_dataset_configs(idx):
         3:dict(
             type="SkyTimelapseDatasetForEvalFVD",
             
-            root="/data/SkyTimelapse/sky_timelapse/sky_timelapse/sky_test",
+            root=_VAL_DATA_ROOT,
             n_sample_frames = 32,
             image_size=(256,256),
             read_video = True,
