@@ -45,9 +45,13 @@ bash scripts/eval_fvd.sh \
 /data/CausalSTDiT_working_dir/debug_inference/sampling_cfg_14831e3e05cfd0b1d0a97c2ff2a6b3f5_debug_inference.json \
 working_dirSampleOutput/eval_fvd 3
 
-# exp6 pure causal cyclic tpe 33
+## exp6 pure causal cyclic tpe 33
 
-bash scripts/eval_fvd.sh \
-/data9T/gaokaifeng/CausalSTDiT_working_dir/exp6_ddp_sample_17x256x256/sampling_cfg_8ee3f15f3b85f99b68acf4ae2a179419_exp6_ddp_sample_17x256x256.json \
-working_dirSampleOutput/eval_fvd 2
+    bash scripts/eval_fvd.sh \
+        /data9T/gaokaifeng/CausalSTDiT_working_dir/exp6_ddp_sample_17x256x256/sampling_cfg_8ee3f15f3b85f99b68acf4ae2a179419_exp6_ddp_sample_17x256x256.json \
+        working_dirSampleOutput/eval_fvd 2
+
+    # fvd 16x256x256
+        fvd=218.81257450842054
+
 comment
