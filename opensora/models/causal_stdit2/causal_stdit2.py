@@ -369,6 +369,7 @@ class CausalSTDiT2Block(nn.Module):
         # cross attn
         if self.with_cross_attn:
             x = x + self.cross_attn(x, y, mask)
+            # print("use cross attn")
 
         # mlp
         
@@ -502,7 +503,7 @@ class CausalSTDiT2Block(nn.Module):
                 x = x + MultiHeadCrossAttention.forward(self.cross_attn,x,y,mask)
             else:
                 x = x + self.cross_attn(x, y, mask)
-        
+            # print("use cross attn")
         # mlp
         # x = x + self.drop_path(gate_mlp * self.mlp(t2i_modulate(self.norm2(x), shift_mlp, scale_mlp)))
 
@@ -664,7 +665,7 @@ class CausalSTDiT2(nn.Module):
     def get_relative_tpe(self,chunk_len,chunk_start_idx=None,with_kv_cache=False):
         mode = self.relative_tpe_mode
         max_tpe_len = self.pos_embed_temporal.shape[1] # i.e., self.max_tpe_len
-        assert chunk_len <= max_tpe_len
+        assert chunk_len <= max_tpe_len, f"chunk_len={chunk_len},max_tpe_len={max_tpe_len}"
         '''
         (full-attn,causal-attn) fixed tpe w/o kv-cache
         (full-attn,causal-attn) cyclic tpe w/o kv-cache
@@ -1307,6 +1308,8 @@ class CausalSTDiT2(nn.Module):
 
 @MODELS.register_module("CausalSTDiT2-XL/2")
 def CausalSTDiT2_XL_2(from_pretrained=None,from_scratch=None, **kwargs):
+    if "t_win_size" in kwargs: # support old version code
+        kwargs.pop("t_win_size")
     model = CausalSTDiT2(depth=28, hidden_size=1152, patch_size=(1, 2, 2), num_heads=16, **kwargs)
     if from_pretrained is not None:
         load_checkpoint(model, from_pretrained,save_as_pt=True)
@@ -1316,7 +1319,8 @@ def CausalSTDiT2_XL_2(from_pretrained=None,from_scratch=None, **kwargs):
         if from_scratch == "temporal":
             print(f"  >>> re-initialize {from_scratch} part, discard the pre-trained {from_scratch} part")
             model.initialize_temporal()
-    
+    # print(model.pos_embed_temporal.shape)
+    # assert False, f"model.pos_embed_temporal.shape={model.pos_embed_temporal.shape}"
     return model
 
 
@@ -1335,5 +1339,5 @@ def CausalSTDiT2_Base(from_pretrained=None,from_scratch=None, **kwargs):
     model = CausalSTDiT2(depth=14, hidden_size=1152, patch_size=(1, 2, 2), num_heads=16, **kwargs)
     if from_pretrained is not None:
         load_checkpoint(model, from_pretrained)
-    
+
     return model

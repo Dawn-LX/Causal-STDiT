@@ -13,6 +13,7 @@ from opensora.registry import SCHEDULERS, build_module
 from opensora.utils.misc import to_torch_dtype
 
 from .train_utils import build_progressive_noise
+from .ckpt_utils import save_json
 from .debug_utils import envs
 
 @torch.no_grad()
@@ -158,6 +159,7 @@ def autoregressive_sample_kv_cache(
     if seed:=kwargs.get("seed",None):
         generator.manual_seed(seed)
 
+    time_used_per_step = []
     init_noise = torch.randn(final_size,generator=generator,**device_dtype)
     progressive_alpha = kwargs.get("progressive_alpha",-1)
     for ar_step in tqdm(range(ar_steps),disable=not verbose):
@@ -188,15 +190,27 @@ def autoregressive_sample_kv_cache(
             torch.save(samples,f"{envs.TENSOR_SAVE_DIR}/{filename}")
             # assert ar_step < 2
 
+        time_used_per_step.append({
+            "ar_step":ar_step,
+            "denoise_len":denoise_len,
+            "time_used":time.time() - time_start
+        })
+        
         model.write_latents_to_cache(
             torch.cat([samples]*2,dim=0) if do_cls_free_guidance else samples,
             **model_kwargs
         )
         z_predicted = torch.cat([z_predicted,samples],dim=2) # (B,C, T_accu + T_n, H, W)
 
+        
         if verbose: 
             print(f"ar_step={ar_step}: given {predicted_len} frames,  denoise:{samples.shape} --> get:{z_predicted.shape}")
+            print(time_used_per_step[-1])
+        
 
+    if envs.FPS_INFO_SAVE_DIR:
+        _path = os.path.join(envs.FPS_INFO_SAVE_DIR,"time_used_per_step.json")
+        save_json(time_used_per_step,_path)
 
     time_used = time.time() - time_start
     num_gen_frames = z_predicted.shape[2] - num_given_frames
@@ -239,6 +253,7 @@ def autoregressive_sample(
     if seed:=kwargs.get("seed",None):
         generator.manual_seed(seed)
     
+    time_used_per_step = []
     init_noise = torch.randn(final_size,generator=generator,**device_dtype)
     progressive_alpha = kwargs.get("progressive_alpha",-1)
     for ar_step in tqdm(range(ar_steps),disable=not verbose):
@@ -307,9 +322,19 @@ def autoregressive_sample(
 
         z_predicted = torch.cat([z_predicted,samples],dim=2) # (B,C, T_accu + T_n, H, W)
 
+        
+        time_used_per_step.append({
+            "ar_step":ar_step,
+            "denoise_len":denoise_len,
+            "time_used":time.time() - time_start
+        })
         if verbose: 
             print(f"ar_step={ar_step}: given {predicted_len} frames,  denoise:{samples.shape} --> get:{z_predicted.shape}")
+            print(time_used_per_step[-1])
         
+    if envs.FPS_INFO_SAVE_DIR:
+        _path = os.path.join(envs.FPS_INFO_SAVE_DIR,"time_used_per_step.json")
+        save_json(time_used_per_step,_path)
 
     time_used = time.time() - time_start
     num_gen_frames = z_predicted.shape[2] - num_given_frames
