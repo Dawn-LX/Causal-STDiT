@@ -138,7 +138,6 @@ w/o kv-cache (tpe's cyclic shift will not happen) # w/o kv-cache 的第8帧是�
         latent >> cond: [0][1-8] denoise [9-16]
         tpe    >> cond: [0][1-8] denoise [9-16]
     
-    
     ar_step=2 
         latent >> cond: [0][1-8][9-16] denoise [17-24]
         tpe    >> cond: [0][1-8][9-16] denoise [17-24]
@@ -149,7 +148,7 @@ w/o kv-cache (tpe's cyclic shift will not happen) # w/o kv-cache 的第8帧是�
 
     ar_step=4 
         latent >> cond: [8][9-16][17-24][25-32] denoise [33-40]
-        tpe    >> cond: [0][1-8][9-16][17-24]   denoise [25-32]
+        tpe    >> cond: [0][1- 8][9- 16][17-24] denoise [25-32]
     
     tpe's cyclic shift will only happen when max_cond_len + denoise_chunk_len > max_tpe_len (which is usually not suggested)
 
