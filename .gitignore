@@ -188,7 +188,7 @@ package-lock.json
 package.json
 
 ## assets
-assets/
+assets_local/
 working_dir/
 working_dir*/
 _backup/*
