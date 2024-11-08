@@ -1,6 +1,16 @@
-_SKT_TIMELAPSE_ROOT = "/data/SkyTimelapse/sky_timelapse"
-_VAL_DATA_ROOT= f"{_SKT_TIMELAPSE_ROOT}/sky_test"
+import os
+_ROOT_CKPT_DIR = os.getenv("ROOT_CKPT_DIR","/home/gkf/LargeModelWeightsFromHuggingFace") # or /data9T/gaokaifeng/LargeModelWeightsFromHuggingFace
+_ROOT_DATA_DIR = os.getenv("ROOT_DATA_DIR","/data")  #
+# /data/SkyTimelapse or /data9T/gaokaifeng/datasets/SkyTimelapse
 
+#### data configs:
+_CKPT_PixArt512x512= f"{_ROOT_CKPT_DIR}/PixArt-alpha/PixArt-XL-2-512x512.pth"
+_CKPT_OpenSORA16x512x512 = f"{_ROOT_CKPT_DIR}/opensora/OpenSora-v1-HQ-16x512x512.pth"
+_CKPT_SD_VAE_FT_EMA=f"{_ROOT_CKPT_DIR}/PixArt-alpha/sd-vae-ft-ema"
+_CKPT_T5_V_1_1_XXL = f"{_ROOT_CKPT_DIR}/PixArt-alpha/t5-v1_1-xxl"
+
+_SKT_TIMELAPSE_ROOT = f"{_ROOT_DATA_DIR}/SkyTimelapse/sky_timelapse"
+_VAL_DATA_ROOT= f"{_SKT_TIMELAPSE_ROOT}/sky_test"
 
 scheduler  = dict(
     type="iddpm",
@@ -13,8 +23,8 @@ sample_cfgs = dict(
     width = 256,
     height = 256,
     auto_regre_chunk_len = 8,
-    auto_regre_steps = 7,
-    seed = 666
+    auto_regre_steps = 10,
+    seed = 111
 )
 
 # '''set them in configs/baselines/exps_list.py
@@ -36,16 +46,16 @@ examples = [
 
         # the following configs will over-write those in `sample_cfgs`:
         auto_regre_steps=20,
-        seed = 555
+        seed = 111
     ), 
 
-    dict(
-        prompt =  None,
-        first_image =  f"{_VAL_DATA_ROOT}/LiWpE-zW14I/LiWpE-zW14I_1/LiWpE-zW14I_frames_00000871.jpg",
-        # the following configs will over-write those in `sample_cfgs`:
-        auto_regre_steps=20,
-        seed = 555
-    ),    
+    # dict(
+    #     prompt =  None,
+    #     first_image =  f"{_VAL_DATA_ROOT}/LiWpE-zW14I/LiWpE-zW14I_1/LiWpE-zW14I_frames_00000871.jpg",
+    #     # the following configs will over-write those in `sample_cfgs`:
+    #     auto_regre_steps=20,
+    #     seed = 111
+    # ),    
     
    
 ]

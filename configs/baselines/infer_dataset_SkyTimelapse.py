@@ -1,9 +1,15 @@
-
 import os
+_ROOT_CKPT_DIR = os.getenv("ROOT_CKPT_DIR","/home/gkf/LargeModelWeightsFromHuggingFace") # or /data9T/gaokaifeng/LargeModelWeightsFromHuggingFace
 _ROOT_DATA_DIR = os.getenv("ROOT_DATA_DIR","/data")  #
+# /data/SkyTimelapse or /data9T/gaokaifeng/datasets/SkyTimelapse
 
-_SKT_TIMELAPSE_ROOT = f"{_ROOT_DATA_DIR}/SkyTimelapse/sky_timelapse" 
-# /data/SkyTimelapse/sky_timelapse or /data9T/gaokaifeng/datasets/SkyTimelapse/sky_timelapse
+#### data configs:
+_CKPT_PixArt512x512= f"{_ROOT_CKPT_DIR}/PixArt-alpha/PixArt-XL-2-512x512.pth"
+_CKPT_OpenSORA16x512x512 = f"{_ROOT_CKPT_DIR}/opensora/OpenSora-v1-HQ-16x512x512.pth"
+_CKPT_SD_VAE_FT_EMA=f"{_ROOT_CKPT_DIR}/PixArt-alpha/sd-vae-ft-ema"
+_CKPT_T5_V_1_1_XXL = f"{_ROOT_CKPT_DIR}/PixArt-alpha/t5-v1_1-xxl"
+
+_SKT_TIMELAPSE_ROOT = f"{_ROOT_DATA_DIR}/SkyTimelapse/sky_timelapse"
 _VAL_DATA_ROOT= f"{_SKT_TIMELAPSE_ROOT}/sky_test"
 
 val_data_cfg = dict(
