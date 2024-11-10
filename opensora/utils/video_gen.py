@@ -44,7 +44,8 @@ def validation_visualize(model,vae,text_encoder,val_examples,val_cfgs,exp_dir,wr
             max_condion_frames = val_cfgs.max_condion_frames
         )
     additional_kwargs.update(dict(
-        progressive_alpha=val_cfgs.get("progressive_alpha",-1)
+        progressive_alpha=val_cfgs.get("progressive_alpha",-1),
+        prefix_perturb_t = val_cfgs.get("prefix_perturb_t",-1)
     ))
     
     for idx,example in enumerate(val_examples):
@@ -53,8 +54,8 @@ def validation_visualize(model,vae,text_encoder,val_examples,val_cfgs,exp_dir,wr
             current_seed = int(str(datetime.now().timestamp()).split('.')[-1][:4])
 
         if (first_image := example.first_image) is not None:
-            first_image = first_image.to(device=device,dtype=dtype) # (1,3,h,w)
-            cond_frame_latents = vae.encode(first_image.unsqueeze(2)) # vae accept shape (B,C,T,H,W), here B=1,T=1
+            first_image = first_image.to(device=device,dtype=dtype) # (1,3,1,h,w)
+            cond_frame_latents = vae.encode(first_image) # vae accept shape (B,C,T,H,W), here B=1,T=1
         else:
             cond_frame_latents = None
         
@@ -150,8 +151,27 @@ def autoregressive_sample_kv_cache(
     if do_cls_free_guidance:
         model_kwargs["y"] = torch.cat([y_null,model_kwargs["y"]], dim=0)
 
+    prefix_perturb_t = kwargs.get("prefix_perturb_t",-1)
+    if prefix_perturb_t > 0:
+        orig_num_steps = max(scheduler.timestep_map) + 1
+        if scheduler.num_timesteps < orig_num_steps: # i.e., using an smaller num_timesteps than the training timesteps
+            respaced_perturb_t = int(prefix_perturb_t * scheduler.num_timesteps / orig_num_steps)
+        else:
+            respaced_perturb_t = prefix_perturb_t
+        # print(scheduler.num_timesteps,orig_num_steps,respaced_perturb_t)
+        assert respaced_perturb_t > 0
+    else:
+        respaced_perturb_t = -1
+
+    if respaced_perturb_t > 0:
+        print(f"respaced_perturb_t = {respaced_perturb_t}, actual prefix_perturb_t={scheduler.timestep_map[respaced_perturb_t]}","-="*40)
+        tp_bsz = torch.zeros(size=(bsz,),device=z_predicted.device,dtype=torch.long) + respaced_perturb_t
+        prefix_condition = scheduler.q_sample(z_predicted,tp_bsz, noise = torch.randn_like(z_predicted))
+    else:
+        prefix_condition = z_predicted
+    
     model.write_latents_to_cache(
-        torch.cat([z_predicted]*2,dim=0) if do_cls_free_guidance else z_predicted,
+        torch.cat([prefix_condition]*2,dim=0) if do_cls_free_guidance else prefix_condition,
         **model_kwargs
     )
 
@@ -169,8 +189,8 @@ def autoregressive_sample_kv_cache(
         if progressive_alpha>0: 
             # TODO verify this, check the video gen result is correct
             last_cond = z_predicted[:,:,-1:,:,:]
-            tT_bsz = int(scheduler.num_timesteps -1)
-            tT_bsz = torch.zeros(size=(bsz,),**device_dtype)
+            tT_bsz = int(scheduler.num_timesteps -1)  # this is actually after timestep respacing, i.e., here tT  != 999
+            tT_bsz = torch.zeros(size=(bsz,),device=z_predicted.device,dtype=torch.long) + tT_bsz
             start_noise = scheduler.q_sample(last_cond,tT_bsz, noise = torch.randn_like(last_cond))
             init_noise_chunk = build_progressive_noise(progressive_alpha, (bsz, *z_size), start_noise)
         
@@ -196,8 +216,14 @@ def autoregressive_sample_kv_cache(
             "time_used":time.time() - time_start
         })
         
+        if respaced_perturb_t > 0:
+            tp_bsz = torch.zeros(size=(bsz,),device=z_predicted.device,dtype=torch.long) + respaced_perturb_t
+            prefix_condition = scheduler.q_sample(samples,tp_bsz, noise = torch.randn_like(samples))
+        else:
+            prefix_condition = samples
+        
         model.write_latents_to_cache(
-            torch.cat([samples]*2,dim=0) if do_cls_free_guidance else samples,
+            torch.cat([prefix_condition]*2,dim=0) if do_cls_free_guidance else prefix_condition,
             **model_kwargs
         )
         z_predicted = torch.cat([z_predicted,samples],dim=2) # (B,C, T_accu + T_n, H, W)
@@ -236,6 +262,19 @@ def autoregressive_sample(
     do_cls_free_guidance = scheduler.cfg_scale > 1.0
 
     z_predicted = cond_frame_latents.clone().to(**device_dtype)  # (B,C, T_c, H, W)
+
+    prefix_perturb_t = kwargs.get("prefix_perturb_t",-1)
+    if prefix_perturb_t > 0:
+        orig_num_steps = max(scheduler.timestep_map) + 1
+        if scheduler.num_timesteps < orig_num_steps: # i.e., using an smaller num_timesteps than the training timesteps
+            respaced_perturb_t = int(prefix_perturb_t * scheduler.num_timesteps / orig_num_steps)
+        else:
+            respaced_perturb_t = prefix_perturb_t
+        # print(scheduler.num_timesteps,orig_num_steps,respaced_perturb_t)
+        assert respaced_perturb_t > 0
+    else:
+        respaced_perturb_t = -1
+
     
     time_start = time.time()
     num_given_frames = z_predicted.shape[2]
@@ -264,7 +303,7 @@ def autoregressive_sample(
             # TODO verify this, check the video gen result is correct
             last_cond = z_predicted[:,:,-1:,:,:]
             tT_bsz = int(scheduler.num_timesteps -1)
-            tT_bsz = torch.zeros(size=(bsz,),**device_dtype)
+            tT_bsz = torch.zeros(size=(bsz,),device=z_predicted.device,dtype=torch.long) + tT_bsz
             start_noise = scheduler.q_sample(last_cond,tT_bsz, noise = torch.randn_like(last_cond))
             init_noise_chunk = build_progressive_noise(progressive_alpha, (bsz, *z_size), start_noise)
         
@@ -276,6 +315,14 @@ def autoregressive_sample(
             # predicted_len <=  max_condion_frames, BUT what if predicted_len+denoise_len > max_model_accpet_len ?
             z_cond = z_predicted
         cond_len = z_cond.shape[2]
+        if respaced_perturb_t > 0:
+            if ar_step==0:
+                print(f"respaced_perturb_t = {respaced_perturb_t}, actual prefix_perturb_t={scheduler.timestep_map[respaced_perturb_t]}","-="*40)
+            tp_bsz = torch.zeros(size=(bsz,),device=z_cond.device,dtype=torch.long) + respaced_perturb_t
+            z_cond = scheduler.q_sample(z_cond,tp_bsz, noise = torch.randn_like(z_cond))
+        else:
+            pass
+            
         z_input = torch.cat([z_cond,init_noise_chunk],dim=2) # (B, C, T_c+T_n, H, W)
         if model.relative_tpe_mode != "cyclic":
             # make sure the temporal position emb not out of range
@@ -289,7 +336,7 @@ def autoregressive_sample(
             # e.g., max_tpe_len=33, cond: [1,8,9,17,25], chunk_len=8, but we set max_condion_frames=27
         
         if model.relative_tpe_mode is None:
-            assert max_condion_frames + denoise_len == model.max_tpe_len 
+            assert max_condion_frames + denoise_len == model.max_tpe_len, f"{max_condion_frames}+{denoise_len}!={model.max_tpe_len}" 
         # else:
         z_input_temporal_start = z_predicted.shape[2] - z_cond.shape[2]
         model_kwargs.update({"x_temporal_start":z_input_temporal_start})

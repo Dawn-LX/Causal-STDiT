@@ -39,14 +39,14 @@ examples = [
         first_image =  f"{_VAL_DATA_ROOT}/07U1fSrk9oI/07U1fSrk9oI_1/07U1fSrk9oI_frames_00000046.jpg",
 
         # the following configs will over-write those in `sample_cfgs`:
-        auto_regre_steps=20,
+        auto_regre_steps=15,
     ),
     dict(
         prompt =  None,
         first_image =  f"{_VAL_DATA_ROOT}/LiWpE-zW14I/LiWpE-zW14I_1/LiWpE-zW14I_frames_00000871.jpg",
 
         # the following configs will over-write those in `sample_cfgs`:
-        auto_regre_steps=20,
+        auto_regre_steps=15,
     ),
     
 ]

@@ -51,10 +51,50 @@ torchrun \
 
 <<comment
 
-parser.add_argument("--exp_dir",type=str, default="/data/CausalSTDiT_working_dir/debug")
-    parser.add_argument("--sample_save_dir",type=str, default="/data/sample_outputs")
+############### 2024-11-07 for cvpr2025 ##################
 
-# debug
+# exp7  full-attn fixed tpe
+    bash scripts/inference2.sh \
+    configs/baselines/infer_example_SkyTimelapse_NoKVCache.py \
+    /data9T/gaokaifeng/CausalSTDiT_working_dir/exp7_fullattn_CfattnPp3_fixed_tpe33/training_config_backup.json2024-08-27T16-28-10.json \
+    /data9T/gaokaifeng/CausalSTDiT_working_dir/exp7_fullattn_CfattnPp3_fixed_tpe33/epoch3-global_step13000 \
+    working_dirSampleOutput/exp7_fullattn_CfattnPp3_fixed_tpe33 \
+    9985 0
+
+# exp 7.2 full-attn fixed-TEP w/o cf-attn
+    bash scripts/inference2.sh \
+    configs/baselines/infer_example_SkyTimelapse_NoKVCache.py \
+    /data9T/gaokaifeng/CausalSTDiT_working_dir/exp7.2_fullattn_NoCfattn_fixed_tpe33/training_config_backup.json \
+    /data9T/gaokaifeng/CausalSTDiT_working_dir/exp7.2_fullattn_NoCfattn_fixed_tpe33/epoch2-global_step11000 \
+    working_dirSampleOutput/exp7.2_fullattn_NoCfattn_fixed_tpe33_ppt50 \
+    9185 2
+
+# exp6 causal cyclic tpe  
+    bash scripts/inference2.sh \
+    configs/baselines/infer_example_SkyTimelapse_kv_cache.py \
+    /data9T/gaokaifeng/CausalSTDiT_working_dir/exp6_pure_causal_CfattnPp3_tpe33/training_config_backup.json2024-08-26T19-34-35.json \
+    /data9T/gaokaifeng/CausalSTDiT_working_dir/exp6_pure_causal_CfattnPp3_tpe33/epoch2-global_step11000 \
+    working_dirSampleOutput/exp6_pure_causal_CfattnPp3_tpe33_with_kvCache \
+    9986 0
+
+# exp6.2 causal cyclic-TPE w/o cf-attn
+    bash scripts/inference2.sh \
+    configs/baselines/infer_example_SkyTimelapse_kv_cache.py \
+    /data9T/gaokaifeng/CausalSTDiT_working_dir/exp6.2_pure_causal_NoCfattn_tpe33/training_config_backup.json2024-09-30T15-54-59.json \
+    /data9T/gaokaifeng/CausalSTDiT_working_dir/exp6.2_pure_causal_NoCfattn_tpe33/epoch2-global_step11000 \
+    working_dirSampleOutput/exp6.2_pure_causal_NoCfattn_tpe33_with_kvCache_ppt50 \
+    9986 0
+
+# exp6.4 causal cyclic-TPE w/o cf-attn maxCond=41,maxTPE=49
+    bash scripts/inference2.sh \
+    configs/baselines/infer_example_SkyTimelapse_kv_cache.py \
+    /data9T/gaokaifeng/CausalSTDiT_working_dir/exp6.4_pure_causal_NoCfattn_tpe49/training_config_backup.json \
+    /data9T/gaokaifeng/CausalSTDiT_working_dir/exp6.4_pure_causal_NoCfattn_tpe49/epoch4-global_step12000 \
+    working_dirSampleOutput/exp6.4_pure_causal_NoCfattn_tpe49_with_kvCache_ppt50 \
+    9986 0
+    
+
+
 
 ### overfit-beach
 

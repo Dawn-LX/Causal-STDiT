@@ -170,13 +170,19 @@ def merge_args(cfg,train_cfg,args):
         model = train_cfg.model,
         vae = train_cfg.vae,
         clean_prefix = train_cfg.clean_prefix,
-        clean_prefix_set_t0 = train_cfg.clean_prefix_set_t0
+        clean_prefix_set_t0 = train_cfg.clean_prefix_set_t0,
     ))
+    if "prefix_perturb_t" in cfg.keys():
+        # maybe change the prefix_perturb_t at test time
+        pass
+    else:
+        cfg.update(prefix_perturb_t = train_cfg.prefix_perturb_t)
+
     if "text_encoder" in cfg.keys():
         # maybe change the configs of text_encoder at test time
         pass
     else:
-        cfg.update(dict(text_encoder = train_cfg.text_encoder))
+        cfg.update(text_encoder = train_cfg.text_encoder)
     
     assert args.ckpt_path is not None
     cfg.model.from_pretrained = args.ckpt_path
