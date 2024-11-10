@@ -76,7 +76,7 @@ _ROOT_DATA_DIR = os.getenv("ROOT_DATA_DIR","/data")  #
     
 # ablations on  skytimelapse:
 
-    # full-attn fixed tpe
+    #exp7 full-attn fixed tpe
         # w/ cf-attn
         bash scripts/train.sh \
         configs/ablations_on_SkyTimelapse/exp7_fullattn_fixed_tpe33.py \
@@ -95,6 +95,12 @@ _ROOT_DATA_DIR = os.getenv("ROOT_DATA_DIR","/data")  #
         exp7.3_fullattn_NoCfattn_fixed_tpe49 \
         9681 1
 
+        # exp 7.4 full-attn fixed-TEP w/o cf-attn, w/o extendable condition
+        bash scripts/train.sh \
+        configs/ablations_on_SkyTimelapse/exp7.4_fullattn_fixed_tpe16_NoCfAttn.py \
+        exp7.4_fullattn_NoCfattn_fixed_tpe16 \
+        9081 0
+
 
     # partial causal attn cyclic tpe
     bash scripts/train.sh \
@@ -102,7 +108,7 @@ _ROOT_DATA_DIR = os.getenv("ROOT_DATA_DIR","/data")  #
     exp5_partial_causal_CfattnPp3_tpe33 \
     9686 0
 
-    # pure causal attn cyclic tpe
+    # exp6 pure causal attn cyclic tpe
         
         # w/ cf-attn
         bash scripts/train.sh \

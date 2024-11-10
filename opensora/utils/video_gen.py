@@ -54,8 +54,8 @@ def validation_visualize(model,vae,text_encoder,val_examples,val_cfgs,exp_dir,wr
             current_seed = int(str(datetime.now().timestamp()).split('.')[-1][:4])
 
         if (first_image := example.first_image) is not None:
-            first_image = first_image.to(device=device,dtype=dtype) # (1,3,h,w)
-            cond_frame_latents = vae.encode(first_image.unsqueeze(2)) # vae accept shape (B,C,T,H,W), here B=1,T=1
+            first_image = first_image.to(device=device,dtype=dtype) # (1,3,1,h,w)
+            cond_frame_latents = vae.encode(first_image) # vae accept shape (B,C,T,H,W), here B=1,T=1
         else:
             cond_frame_latents = None
         
