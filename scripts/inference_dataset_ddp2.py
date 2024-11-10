@@ -160,7 +160,8 @@ def main(cfg):
             max_condion_frames = cfg.max_condion_frames
         )
     additional_kwargs.update(dict(
-        progressive_alpha=cfg.get("progressive_alpha",-1)
+        progressive_alpha=cfg.get("progressive_alpha",-1),
+        prefix_perturb_t = cfg.get("prefix_perturb_t",-1)
     ))
 
     
@@ -225,6 +226,12 @@ def merge_args(cfg,train_cfg,args):
     ))
     assert args.ckpt_path is not None
     cfg.model.from_pretrained = args.ckpt_path
+
+    if "prefix_perturb_t" in cfg.keys():
+        # maybe change the prefix_perturb_t at test time
+        pass
+    else:
+        cfg.update(prefix_perturb_t = train_cfg.prefix_perturb_t)
 
     default_cfgs = dict(
         dtype = "fp16",

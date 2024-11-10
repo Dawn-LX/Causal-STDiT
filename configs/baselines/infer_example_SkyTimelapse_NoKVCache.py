@@ -41,6 +41,7 @@ enable_flashattn = True
 # max_seqlen=33, cond: [1,9,17,25]
 
 # infer:
+prefix_perturb_t = 50
 
 # "first_image": "/home/gkf/project/CausalSTDiT/assets/videos/beach1.mp4.1st_frame.jpg"
 examples = [
@@ -49,7 +50,7 @@ examples = [
         first_image =  f"{_VAL_DATA_ROOT}/07U1fSrk9oI/07U1fSrk9oI_1/07U1fSrk9oI_frames_00000046.jpg",
 
         # the following configs will over-write those in `sample_cfgs`:
-        auto_regre_steps=20,
+        auto_regre_steps=15,
         seed = 111
     ), 
 
@@ -57,7 +58,7 @@ examples = [
     #     prompt =  None,
     #     first_image =  f"{_VAL_DATA_ROOT}/LiWpE-zW14I/LiWpE-zW14I_1/LiWpE-zW14I_frames_00000871.jpg",
     #     # the following configs will over-write those in `sample_cfgs`:
-    #     auto_regre_steps=20,
+    #     auto_regre_steps=15,
     #     seed = 111
     # ),    
     
