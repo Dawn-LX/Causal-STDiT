@@ -82,14 +82,25 @@ configs/baselines/infer_dataset_SkyTimelapse.py \
 
 ######## 2024-11-10 for cvpr2025
 
+    # exp6.2 causal cyclic-TPE w/o cf-attn maxCond=25,maxTPE=33
+        bash /home/gkf/project/CausalSTDiT/scripts/inference_dataset_ddp.sh \
+        /home/gkf/project/CausalSTDiT/configs/ddp_sample_skytimelapse/chunk8_MaxCond25_ArSteps6_withKVcache.py \
+        /data/CausalSTDiT_working_dir/exp6.2_pure_causal_NoCfattn_tpe33/training_config_backup.json2024-09-30T15-54-59.json \
+        /data/CausalSTDiT_working_dir/exp6.2_pure_causal_NoCfattn_tpe33/epoch2-global_step11000 \
+        /data/CausalSTDiT_working_dir/exp6.2_ddp_sample_49x256x256 \
+        9977 0
+
+    crontab:
+    46 22 * * 1 bash /home/gkf/project/CausalSTDiT/scripts/inference_dataset_ddp.sh /home/gkf/project/CausalSTDiT/configs/ddp_sample_skytimelapse/chunk8_MaxCond25_ArSteps6_withKVcache.py /data/CausalSTDiT_working_dir/exp6.2_pure_causal_NoCfattn_tpe33/training_config_backup.json2024-09-30T15-54-59.json /data/CausalSTDiT_working_dir/exp6.2_pure_causal_NoCfattn_tpe33/epoch2-global_step11000 /data/CausalSTDiT_working_dir/exp6.2_ddp_sample_49x256x256 9971 0
+
     # exp6.4 causal cyclic-TPE w/o cf-attn maxCond=41,maxTPE=49
 
         bash scripts/inference_dataset_ddp.sh \
         configs/ddp_sample_skytimelapse/chunk8_MaxCond41_ArSteps6_withKVcache.py \
-        /data9T/gaokaifeng/CausalSTDiT_working_dir/exp6.4_pure_causal_NoCfattn_tpe49/training_config_backup.json \
-        /data9T/gaokaifeng/CausalSTDiT_working_dir/exp6.4_pure_causal_NoCfattn_tpe49/epoch4-global_step12000 \
-        /data9T/gaokaifeng/CausalSTDiT_working_dir/exp6.4_ddp_sample_49x256x256 \
-        9966 0,2
+        /data/CausalSTDiT_working_dir/exp6.4_pure_causal_NoCfattn_tpe49/training_config_backup.json \
+        /data/CausalSTDiT_working_dir/exp6.4_pure_causal_NoCfattn_tpe49/epoch4-global_step12000 \
+        /data/CausalSTDiT_working_dir/exp6.4_ddp_sample_49x256x256 \
+        9966 0
 
         # bsz=4 per gpu, 2gpu, 140s/it
     
@@ -100,6 +111,6 @@ configs/baselines/infer_dataset_SkyTimelapse.py \
         /data9T/gaokaifeng/CausalSTDiT_working_dir/exp7.2_fullattn_NoCfattn_fixed_tpe33/training_config_backup.json \
         /data9T/gaokaifeng/CausalSTDiT_working_dir/exp7.2_fullattn_NoCfattn_fixed_tpe33/epoch2-global_step11000 \
         /data9T/gaokaifeng/CausalSTDiT_working_dir/exp7.2_ddp_sample_49x256x256 \
-        9766 2
-
+        9766 0
+scp -r gaokaifeng@10.130.129.34:/data9T/gaokaifeng/CausalSTDiT_working_dir/
 comment
