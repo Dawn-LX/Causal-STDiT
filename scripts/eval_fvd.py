@@ -358,7 +358,8 @@ def eval_stepFVD(args):
     sample_config = Config.fromfile(args.sample_config)
     gen_video_dir =  sample_config.sample_save_dir
     logger.info(f"load gen data sampling config: {args.sample_config}")
-    logger.info(f"gen_video_dir: {gen_video_dir}")
+    num_files = len(os.listdir(gen_video_dir))
+    logger.info(f"gen_video_dir: {gen_video_dir}; num_files={num_files}")
 
     # ================================================================
     # 3. build dataset & dataloader
@@ -366,13 +367,14 @@ def eval_stepFVD(args):
     
     SkyTimelapseDatasetForEvalFVD
     gt_data_cfg = get_gt_dataset_configs(2)
+    gt_data_cfg["num_samples_total"]=num_files
     gt_dataset = build_module(gt_data_cfg, DATASETS,print_fn=logger.info)
     # build it only to get the `transforms`
 
     gen_dataset = GenVideoDataset(
         gen_video_dir,
         transforms=gt_dataset.transforms,
-        nframes=17, # TODO make this configable
+        nframes=-1, # TODO make this configable
         print_fn=logger.info
     )
     del gt_dataset
@@ -387,18 +389,44 @@ def eval_stepFVD(args):
     # ================================================================
     # 4. compute i3d feats
     # ================================================================
-
-    gen_feats = []
+    ar_steps = [0,1,2,3,4,5,6]
+    ar_steps_to_fids = {0:torch.as_tensor([0])}
+    for ar_id in ar_steps[1:]:
+        sid = (ar_id-1)*8+1
+        fids = torch.as_tensor(range(sid,sid+8))
+        ar_steps_to_fids.update({ar_id:fids})
+    print(ar_steps_to_fids)
+    
+    
+    gen_feats = {ar_id:[] for ar_id in ar_steps[1:]}
     for batch in tqdm(gen_dataloader,desc="compute i3d feats for gen data"):
         video_names = batch["video_name"]
         gen_videos:torch.Tensor = batch["video"] # (B,C,T,H,W), values in -1 ~ 1
         gen_videos = (gen_videos + 1) / 2.0  # -1~1 --> 0~1
-        feats = _get_fvd_feats(gen_videos)
-        # print(gen_videos.shape,feats.shape)
-        gen_feats.append(feats)
-    gen_feats = np.concatenate(gen_feats,axis=0)
-    # /data9T/gaokaifeng/video_gen_ddp_sample/89809e77703bee9c024c56642eebcf01_exp6.4_ddp_sample_49x256x256/
+        assert ar_steps_to_fids[6][-1] == gen_videos.shape[2] - 1 
+        for ar_id,fids in ar_steps_to_fids.items():
+            if ar_id ==0:
+                continue
+            fids:torch.Tensor
+            if len(fids) < 16:
+                # incase too short for downsample in I3D network (8 x downsample)
+                fids = fids.repeat_interleave(2,dim=0) 
+                # [1,2,3,4,5,6,7,8] --> [1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6, 7, 7, 8, 8]
+            chunk_i = gen_videos[:,:,fids,:,:]
+            feats_i:np.ndarray = _get_fvd_feats(chunk_i)
+            gen_feats[ar_id].append(feats_i)
     
+    chunk1 = np.concatenate(gen_feats[1],axis=0)
+    logger.info(f"chunk1:{chunk1.shape}")
+    fvd_to_chunk1 = dict()
+    for ar_id in ar_steps[2:]: # 2,3,4,5,6
+        chunk_i = np.concatenate(gen_feats[ar_id],axis=0)
+        fvd_i = frechet_distance(chunk_i,chunk1)
+        fvd_to_chunk1[ar_id] = fvd_i
+    logger.info(f"fvd_to_chunk1={fvd_to_chunk1}")
+    logger.info(f"results saved at log_path: {log_path}")
+
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
