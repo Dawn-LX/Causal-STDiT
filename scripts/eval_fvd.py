@@ -426,7 +426,130 @@ def eval_stepFVD(args):
     logger.info(f"fvd_to_chunk1={fvd_to_chunk1}")
     logger.info(f"results saved at log_path: {log_path}")
 
+@torch.no_grad()
+def eval_stepFVDtoGT(args):
+    # ================================================================
+    # 1. prepare i3d & fvd related funcs
+    # ================================================================
+    if args.method == 'styleganv':
+        from evaluation.fvd.styleganv.fvd import get_fvd_feats, frechet_distance, load_i3d_pretrained
+        i3d_weights_path = f"{I3D_WEIGHTS_DIR}/styleganv/i3d_torchscript.pt"
+    elif args.method == 'videogpt':
+        from evaluation.fvd.videogpt.fvd import load_i3d_pretrained
+        from evaluation.fvd.videogpt.fvd import get_fvd_logits as get_fvd_feats
+        from evaluation.fvd.videogpt.fvd import frechet_distance
+        i3d_weights_path = f"{I3D_WEIGHTS_DIR}/videogpt/i3d_pretrained_400.pt"
 
+
+    device=torch.device("cuda")
+    i3d = load_i3d_pretrained(weights_path=i3d_weights_path,device=device)
+
+    def _get_fvd_feats(vid:torch.Tensor) -> np.ndarray :
+        # vid: (B,C,T,H,W)
+        bsz = vid.shape[0] # we use the bsz outside (i.e., the bsz of dataloader)
+        feats = get_fvd_feats(vid, i3d=i3d, device=device,bs=bsz) # (bsz,400)
+        if args.method == 'styleganv':
+            pass
+        elif args.method == 'videogpt':
+            feats = feats.cpu().numpy()
+        return feats
+        
+
+    # ================================================================
+    # 2. prepare logger & configs
+    # ================================================================
+
+    os.makedirs(exp_dir:=args.exp_dir,exist_ok=True)
+    logger,log_path = create_logger(exp_dir,return_log_path=True)
+    
+
+    sample_config = Config.fromfile(args.sample_config)
+    gen_video_dir =  sample_config.sample_save_dir
+    logger.info(f"load gen data sampling config: {args.sample_config}")
+    num_files = len(os.listdir(gen_video_dir))
+    logger.info(f"gen_video_dir: {gen_video_dir}; num_files={num_files}")
+    
+    gt_data_cfg = get_gt_dataset_configs(2)
+    gt_data_cfg["num_samples_total"]=num_files
+    gt_data_cfg["n_sample_frames"]=16
+    logger.info(f"use gt_dataset_cfg: \n {pformat(gt_data_cfg)} \n")
+
+    # ================================================================
+    # 3. build dataset & dataloader
+    # ================================================================
+    
+    SkyTimelapseDatasetForEvalFVD
+    gt_dataset = build_module(gt_data_cfg, DATASETS,print_fn=logger.info)
+    gt_dataloader = DataLoader(
+        gt_dataset,
+        batch_size=args.batch_size,
+        drop_last=False,
+        shuffle=False,
+        num_workers=args.num_workers,
+    )
+
+    gen_dataset = GenVideoDataset(
+        gen_video_dir,
+        transforms=gt_dataset.transforms,
+        nframes=-1, # TODO make this configable
+        print_fn=logger.info
+    )
+    gen_dataloader = DataLoader(
+        gen_dataset,
+        batch_size=args.batch_size,
+        drop_last=False,
+        shuffle=False,
+        num_workers=args.num_workers,
+    )
+    # ================================================================
+    # 4. compute i3d feats
+    # ================================================================
+
+    gt_feats = []
+    for batch in tqdm(gt_dataloader,desc="compute i3d feats for gt data"):
+        video_names = batch["video_name"]
+        gt_videos:torch.Tensor = batch["video"] # (B,C,T,H,W), values in -1 ~ 1
+        # gt_videos = gt_videos.repeat_interleave(2,dim=2)
+        gt_videos = (gt_videos + 1) / 2.0  # -1~1 --> 0~1
+        feats = _get_fvd_feats(gt_videos)
+        gt_feats.append(feats)
+
+
+    ar_steps = [0,1,2,3,4,5,6]
+    ar_steps_to_fids = {0:torch.as_tensor([0])}
+    for ar_id in ar_steps[1:]:
+        sid = (ar_id-1)*8+1
+        fids = torch.as_tensor(range(sid,sid+8))
+        ar_steps_to_fids.update({ar_id:fids})
+    print(ar_steps_to_fids)
+    
+    gen_feats = {ar_id:[] for ar_id in ar_steps[1:]}
+    for batch in tqdm(gen_dataloader,desc="compute i3d feats for gen data"):
+        video_names = batch["video_name"]
+        gen_videos:torch.Tensor = batch["video"] # (B,C,T,H,W), values in -1 ~ 1
+        gen_videos = (gen_videos + 1) / 2.0  # -1~1 --> 0~1
+        assert ar_steps_to_fids[6][-1] == gen_videos.shape[2] - 1, f"gen_videos.shape={gen_videos.shape}"
+        for ar_id,fids in ar_steps_to_fids.items():
+            if ar_id ==0:
+                continue
+            fids:torch.Tensor
+            if len(fids) < 16:
+                # incase too short for downsample in I3D network (8 x downsample)
+                fids = fids.repeat_interleave(2,dim=0) 
+                # [1,2,3,4,5,6,7,8] --> [1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6, 7, 7, 8, 8]
+            chunk_i = gen_videos[:,:,fids,:,:]
+            feats_i:np.ndarray = _get_fvd_feats(chunk_i)
+            gen_feats[ar_id].append(feats_i)
+    
+    chunk_gt = np.concatenate(gt_feats,axis=0)
+    logger.info(f"chunk_gt:{chunk_gt.shape}")
+    fvd_to_chunk1 = dict()
+    for ar_id in ar_steps[1:]: # 1,2,3,4,5,6
+        chunk_i = np.concatenate(gen_feats[ar_id],axis=0)
+        fvd_i = frechet_distance(chunk_i,chunk_gt)
+        fvd_to_chunk1[ar_id] = fvd_i
+    logger.info(f"fvd_to_chunk_gt={fvd_to_chunk1}")
+    logger.info(f"results saved at log_path: {log_path}")
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
@@ -450,7 +573,8 @@ if __name__ == "__main__":
     # i3d_weights_path = f"{I3D_WEIGHTS_DIR}/videogpt/i3d_pretrained_400.pt" (for videogpt)
 
     if args.step_fvd:
-        eval_stepFVD(args)
+        # eval_stepFVD(args)
+        eval_stepFVDtoGT(args)
     else:
         main(args)
     # gen_data_demo()

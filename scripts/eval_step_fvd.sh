@@ -48,6 +48,11 @@ working_dirSampleOutput/eval_fvd 3
 
 ## pure causal cyclic w/o PE
 
+    # exp6
+    bash scripts/eval_step_fvd.sh \
+    /data9T/gaokaifeng/CausalSTDiT_working_dir/exp6_ddp_sample_17x256x256/sampling_cfg_8ee3f15f3b85f99b68acf4ae2a179419_exp6_ddp_sample_17x256x256.json \
+    working_dirSampleOutput/eval_step_fvd/exp6_17frames 0
+
     # exp6.2
     bash scripts/eval_step_fvd.sh \
     /data/CausalSTDiT_working_dir/exp6.2_ddp_sample_49x256x256/sampling_cfg_66e009f115d466bfd2bc5930dc78d87c_exp6.2_ddp_sample_49x256x256.json \
@@ -59,6 +64,16 @@ working_dirSampleOutput/eval_fvd 3
     /data/CausalSTDiT_working_dir/exp6.4_ddp_sample_49x256x256/sampling_cfg_cb7782f3eddb9d360790070b6de9fe00_exp6.4_ddp_sample_49x256x256.json \
     working_dirSampleOutput/eval_step_fvd/exp6.4 2
 
+# full-attn fixed TPE
+
+    # exp7.2
+        bash scripts/eval_step_fvd.sh \
+        /data9T/gaokaifeng/CausalSTDiT_working_dir/exp7.2_ddp_sample_49x256x256/sampling_cfg_c392b906626f6a776cf81b2c39edf997_exp7.2_ddp_sample_49x256x256.json \
+        working_dirSampleOutput/eval_step_fvd/exp7.2 0
+
+        bash scripts/eval_step_fvd.sh \
+        /data9T/gaokaifeng/CausalSTDiT_working_dir/exp7.2_ddp_sample_49x256x256/sampling_cfg_c392b906626f6a776cf81b2c39edf997_exp7.2_ddp_sample_49x256x256.json \
+        working_dirSampleOutput/eval_step_fvd/exp7.2_to_gt 0
 
     /data/CausalSTDiT_working_dir/exp6.2_ddp_sample_49x256x256/sampling_cfg_66e009f115d466bfd2bc5930dc78d87c_exp6.2_ddp_sample_49x256x256.json
     "/data/sample_outputs/66e009f115d466bfd2bc5930dc78d87c_exp6.2_ddp_sample_49x256x256",
