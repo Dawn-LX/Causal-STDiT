@@ -124,6 +124,7 @@ class GenVideoDataset:
         if self.nframes > 0:
             video = video[:self.nframes]
             assert video.shape[0] == self.nframes # otherwise we cannot stack them in `collate_fn`
+            # the assert will be False if there are very shot videos (<self.nframes)
 
         
         sample = {
@@ -317,6 +318,88 @@ def main(args):
     logger.info(f"fvd={fvd}")
     logger.info(f"results saved at log_path: {log_path}")
 
+@torch.no_grad()
+def eval_stepFVD(args):
+    
+    # ================================================================
+    # 1. prepare i3d & fvd related funcs
+    # ================================================================
+    if args.method == 'styleganv':
+        from evaluation.fvd.styleganv.fvd import get_fvd_feats, frechet_distance, load_i3d_pretrained
+        i3d_weights_path = f"{I3D_WEIGHTS_DIR}/styleganv/i3d_torchscript.pt"
+    elif args.method == 'videogpt':
+        from evaluation.fvd.videogpt.fvd import load_i3d_pretrained
+        from evaluation.fvd.videogpt.fvd import get_fvd_logits as get_fvd_feats
+        from evaluation.fvd.videogpt.fvd import frechet_distance
+        i3d_weights_path = f"{I3D_WEIGHTS_DIR}/videogpt/i3d_pretrained_400.pt"
+
+
+    device=torch.device("cuda")
+    i3d = load_i3d_pretrained(weights_path=i3d_weights_path,device=device)
+
+    def _get_fvd_feats(vid:torch.Tensor) -> np.ndarray :
+        # vid: (B,C,T,H,W)
+        bsz = vid.shape[0] # we use the bsz outside (i.e., the bsz of dataloader)
+        feats = get_fvd_feats(vid, i3d=i3d, device=device,bs=bsz) # (bsz,400)
+        if args.method == 'styleganv':
+            pass
+        elif args.method == 'videogpt':
+            feats = feats.cpu().numpy()
+        return feats
+        
+
+    # ================================================================
+    # 2. prepare logger & configs
+    # ================================================================
+
+    os.makedirs(exp_dir:=args.exp_dir,exist_ok=True)
+    logger,log_path = create_logger(exp_dir,return_log_path=True)
+    
+    sample_config = Config.fromfile(args.sample_config)
+    gen_video_dir =  sample_config.sample_save_dir
+    logger.info(f"load gen data sampling config: {args.sample_config}")
+    logger.info(f"gen_video_dir: {gen_video_dir}")
+
+    # ================================================================
+    # 3. build dataset & dataloader
+    # ================================================================
+    
+    SkyTimelapseDatasetForEvalFVD
+    gt_data_cfg = get_gt_dataset_configs(2)
+    gt_dataset = build_module(gt_data_cfg, DATASETS,print_fn=logger.info)
+    # build it only to get the `transforms`
+
+    gen_dataset = GenVideoDataset(
+        gen_video_dir,
+        transforms=gt_dataset.transforms,
+        nframes=17, # TODO make this configable
+        print_fn=logger.info
+    )
+    del gt_dataset
+    gen_dataloader = DataLoader(
+        gen_dataset,
+        batch_size=args.batch_size,
+        drop_last=False,
+        shuffle=False,
+        num_workers=args.num_workers,
+    )
+
+    # ================================================================
+    # 4. compute i3d feats
+    # ================================================================
+
+    gen_feats = []
+    for batch in tqdm(gen_dataloader,desc="compute i3d feats for gen data"):
+        video_names = batch["video_name"]
+        gen_videos:torch.Tensor = batch["video"] # (B,C,T,H,W), values in -1 ~ 1
+        gen_videos = (gen_videos + 1) / 2.0  # -1~1 --> 0~1
+        feats = _get_fvd_feats(gen_videos)
+        # print(gen_videos.shape,feats.shape)
+        gen_feats.append(feats)
+    gen_feats = np.concatenate(gen_feats,axis=0)
+    # /data9T/gaokaifeng/video_gen_ddp_sample/89809e77703bee9c024c56642eebcf01_exp6.4_ddp_sample_49x256x256/
+    
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--gt_data_config",type=str, default="./configs/default.py",help="training config")
@@ -328,6 +411,7 @@ if __name__ == "__main__":
     parser.add_argument("--batch_size",type=int, default=2)
     parser.add_argument("--num_workers",type=int, default=4)
     parser.add_argument("--verbose", action='store_true')
+    parser.add_argument("--step_fvd", action='store_true')
     args = parser.parse_args()
 
     
@@ -337,7 +421,10 @@ if __name__ == "__main__":
     # i3d_weights_path = f"{I3D_WEIGHTS_DIR}/styleganv/i3d_torchscript.pt" (for styleganv)
     # i3d_weights_path = f"{I3D_WEIGHTS_DIR}/videogpt/i3d_pretrained_400.pt" (for videogpt)
 
-    main(args)
+    if args.step_fvd:
+        eval_stepFVD(args)
+    else:
+        main(args)
     # gen_data_demo()
 
     '''fvd results:
