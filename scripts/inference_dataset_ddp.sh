@@ -89,6 +89,14 @@ configs/baselines/infer_dataset_SkyTimelapse.py \
         /data/CausalSTDiT_working_dir/exp6.2_pure_causal_NoCfattn_tpe33/epoch2-global_step11000 \
         /data/CausalSTDiT_working_dir/exp6.2_ddp_sample_49x256x256 \
         9977 0
+    
+    # exp 6.2 11k+20k
+        bash /home/gkf/project/CausalSTDiT/scripts/inference_dataset_ddp.sh \
+        /home/gkf/project/CausalSTDiT/configs/ddp_sample_skytimelapse/chunk8_MaxCond25_ArSteps6_withKVcache.py \
+        /data/CausalSTDiT_working_dir/exp6.2_pure_causal_NoCfattn_tpe33_Fromckpt11k/training_config_backup.json \
+        /data/CausalSTDiT_working_dir/exp6.2_pure_causal_NoCfattn_tpe33_Fromckpt11k/epoch4-global_step20000 \
+        /data/CausalSTDiT_working_dir/exp6.2_31k_ddpsample49x256x256 \
+        9977 0
 
     crontab:
     46 22 * * 1 bash /home/gkf/project/CausalSTDiT/scripts/inference_dataset_ddp.sh /home/gkf/project/CausalSTDiT/configs/ddp_sample_skytimelapse/chunk8_MaxCond25_ArSteps6_withKVcache.py /data/CausalSTDiT_working_dir/exp6.2_pure_causal_NoCfattn_tpe33/training_config_backup.json2024-09-30T15-54-59.json /data/CausalSTDiT_working_dir/exp6.2_pure_causal_NoCfattn_tpe33/epoch2-global_step11000 /data/CausalSTDiT_working_dir/exp6.2_ddp_sample_49x256x256 9971 0
