@@ -101,6 +101,12 @@ _ROOT_DATA_DIR = os.getenv("ROOT_DATA_DIR","/data")  #
         exp7.4_fullattn_NoCfattn_fixed_tpe16 \
         9081 0
 
+        # exp 7.5 full-attn fixed-TEP w/o cf-attn, w/o extendable condition, cond_len = [1,8]
+        bash scripts/train.sh \
+        configs/ablations_on_SkyTimelapse/exp7.5_fullattn_fixed_tpe16_NoCfAttn.py \
+        exp7.5_fullattn_NoCfattn_Cond1and8_fixed_tpe16 \
+        9581 0
+
 
     # partial causal attn cyclic tpe
     bash scripts/train.sh \

@@ -172,7 +172,12 @@ class PrefixLenSampler:
     
     def random_choose(self,max_len):
         if self.sampling_strategy is not None:
-            raise NotImplementedError("TODO")
+            if isinstance(self.sampling_strategy,list):
+                pL_choices =  self.sampling_strategy
+            else:
+                raise NotImplementedError("TODO")
+            pL = random.choice(pL_choices)
+            return pL
 
         if max_len in self.prefix_len_choices:
             pL_choices = self.prefix_len_choices[max_len]

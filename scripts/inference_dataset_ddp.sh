@@ -111,6 +111,15 @@ configs/baselines/infer_dataset_SkyTimelapse.py \
         /data9T/gaokaifeng/CausalSTDiT_working_dir/exp7.2_fullattn_NoCfattn_fixed_tpe33/training_config_backup.json \
         /data9T/gaokaifeng/CausalSTDiT_working_dir/exp7.2_fullattn_NoCfattn_fixed_tpe33/epoch2-global_step11000 \
         /data9T/gaokaifeng/CausalSTDiT_working_dir/exp7.2_ddp_sample_49x256x256 \
-        9766 0
-scp -r gaokaifeng@10.130.129.34:/data9T/gaokaifeng/CausalSTDiT_working_dir/
+        9766 2
+
+    # exp 7.4 full-attn fixed-TEP w/o cf-attn fixedCond=8, TPE=16
+        bash scripts/inference_dataset_ddp.sh \
+        configs/ddp_sample_skytimelapse/chunk8_FixCond8_ArSteps6_NoKVcache.py \
+        /data9T/gaokaifeng/CausalSTDiT_working_dir/exp7.4_fullattn_NoCfattn_fixed_tpe16/training_config_backup.json2024-11-10T22-11-11.json \
+        /data9T/gaokaifeng/CausalSTDiT_working_dir/exp7.4_fullattn_NoCfattn_fixed_tpe16/epoch1-global_step11000 \
+        /data9T/gaokaifeng/CausalSTDiT_working_dir/exp7.4_ddp_sample_6stepx256x256 \
+        9766 2
+
+
 comment

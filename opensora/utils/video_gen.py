@@ -376,7 +376,7 @@ def autoregressive_sample(
             "time_used":time.time() - time_start
         })
         if verbose: 
-            print(f"ar_step={ar_step}: given {predicted_len} frames,  denoise:{samples.shape} --> get:{z_predicted.shape}")
+            print(f"ar_step={ar_step}: model_input:{z_input.shape[2]}, cond:{z_cond.shape[2]}  denoise:{samples.shape[2]} --> get:{z_predicted.shape}")
             print(time_used_per_step[-1])
         
     if envs.FPS_INFO_SAVE_DIR:

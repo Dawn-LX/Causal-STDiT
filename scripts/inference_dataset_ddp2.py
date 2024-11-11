@@ -175,9 +175,17 @@ def main(cfg):
         
         video_names = batch["video_name"]
         prompts = batch["text"] if text_encoder is not None else [None]*len(video_names)
-        first_frame = batch["first_frame"]  # (B, C, 1, H, W)
-        first_frame = first_frame.to(device=device,dtype=dtype)
-        first_frame_latents = vae.encode(first_frame) # vae accept shape (B,C,T,H,W)
+        if dataset.read_first_frame:
+            first_frame = batch["first_frame"]  # (B, C, 1, H, W)
+            first_frame = first_frame.to(device=device,dtype=dtype)
+            first_frame_latents = vae.encode(first_frame) # vae accept shape (B,C,T,H,W)
+        else:
+            assert dataset.read_video
+            video = batch["video"] # (B, C, T, H, W)
+            cond_len = cfg.max_condion_frames  # e.g., T//2
+            cond_video = video[:,:,:cond_len,:,:].to(device=device,dtype=dtype)
+            first_frame_latents = vae.encode(cond_video) # vae accept shape (B,C,T,H,W)
+
         
         current_seed = sample_cfgs.seed
         if current_seed == "random":
