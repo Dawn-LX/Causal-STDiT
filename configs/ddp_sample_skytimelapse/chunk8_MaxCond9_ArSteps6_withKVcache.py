@@ -12,6 +12,22 @@ _CKPT_T5_V_1_1_XXL = f"{_ROOT_CKPT_DIR}/PixArt-alpha/t5-v1_1-xxl"
 _SKT_TIMELAPSE_ROOT = f"{_ROOT_DATA_DIR}/SkyTimelapse/sky_timelapse"
 _VAL_DATA_ROOT= f"{_SKT_TIMELAPSE_ROOT}/sky_test"
 
+val_data_cfg = dict(
+    type="SkyTimelapseDatasetForEvalFVD",
+    
+    root=_VAL_DATA_ROOT,
+    n_sample_frames = 16,
+    image_size=(256,256),
+    read_video = False,
+    read_first_frame = True,
+    class_balance_sample = True,
+    num_samples_total = 512,
+)
+
+batch_size = 4
+num_workers = 8
+
+
 scheduler  = dict(
     type="iddpm",
     num_sampling_steps = 100,
@@ -23,12 +39,11 @@ sample_cfgs = dict(
     width = 256,
     height = 256,
     auto_regre_chunk_len = 8,
-    auto_regre_steps = 10,
-    seed = 111
+    auto_regre_steps = 6,
+    seed = "random"
 )
 
-# '''set them in configs/baselines/exps_list.py
-max_condion_frames = 41
+max_condion_frames = 9
 enable_kv_cache = True
 if enable_kv_cache:
     kv_cache_dequeue = True
@@ -36,26 +51,4 @@ if enable_kv_cache:
 # '''
 dtype = "fp16"
 enable_flashattn = True
-# cross_frame_attn= None
 prefix_perturb_t = 50
-
-examples = [
-    dict(
-        prompt =  None,
-        first_image =  f"{_VAL_DATA_ROOT}/07U1fSrk9oI/07U1fSrk9oI_1/07U1fSrk9oI_frames_00000046.jpg",
-
-        # the following configs will over-write those in `sample_cfgs`:
-        auto_regre_steps=15,
-        seed = 555
-    ), 
-
-    # dict(
-    #     prompt =  None,
-    #     first_image =  f"{_VAL_DATA_ROOT}/LiWpE-zW14I/LiWpE-zW14I_1/LiWpE-zW14I_frames_00000871.jpg",
-    #     # the following configs will over-write those in `sample_cfgs`:
-    #     auto_regre_steps=15,
-    #     seed = 111
-    # ),    
-    
-   
-]

@@ -93,14 +93,106 @@ torchrun \
     working_dirSampleOutput/exp6.4_pure_causal_NoCfattn_tpe49_with_kvCache_ppt50 \
     9986 0
     
-# exp6.5 causal cyclic-TPE w/ cf-attn maxCond=41,maxTPE=49
-    bash scripts/inference2.sh \
-    configs/ablations_infer_on_SkyTimelapse/infer_withKVcache_maxCond41.py \
-    /data/CausalSTDiT_working_dir/exp6.5_pure_causal_CfattnPp3_tpe49/training_config_backup.json \
-    /data/CausalSTDiT_working_dir/exp6.5_pure_causal_CfattnPp3_tpe49/epoch3-global_step11000 \
-    working_dirSampleOutput/exp6.5_pure_causal_CfattnPp3_tpe49_with_kvCache_ppt50 \
-    9986 0
+############### 2024-11-11 for cvpr2025 ######## ppt_nose = 50 ##########
+### pp_t=50
+
+    # exp6 maxCOnd=25
+        bash scripts/inference2.sh \
+        configs/ablations_infer_on_SkyTimelapse/infer_withKVcache_maxCond25.py \
+        /data9T/gaokaifeng/CausalSTDiT_working_dir/exp6_pure_causal_CfattnPp3_tpe33/training_config_backup.json2024-08-26T19-34-35.json \
+        /data9T/gaokaifeng/CausalSTDiT_working_dir/exp6_pure_causal_CfattnPp3_tpe33/epoch2-global_step11000 \
+        working_dirSampleOutput/exps_prefix_perturb_t50/exp6_maxCond25 \
+        9981 1
+
+    # exp6.2 maxCond=25
+        bash scripts/inference2.sh \
+        configs/ablations_infer_on_SkyTimelapse/infer_withKVcache_maxCond25.py \
+        /data9T/gaokaifeng/CausalSTDiT_working_dir/exp6.2_pure_causal_NoCfattn_tpe33/training_config_backup.json2024-09-30T15-54-59.json \
+        /data9T/gaokaifeng/CausalSTDiT_working_dir/exp6.2_pure_causal_NoCfattn_tpe33/epoch2-global_step11000 \
+        working_dirSampleOutput/exps_prefix_perturb_t50/exp6.2_maxCond25 \
+        9982 2
+
+    # exp6.3 maxCond=65
+        bash scripts/inference2.sh \
+        configs/ablations_infer_on_SkyTimelapse/infer_withKVcache_maxCond65.py \
+        /data9T/gaokaifeng/CausalSTDiT_working_dir/exp6.3_pure_causal_NoCfattn_tpe73/training_config_backup.json2024-11-08T12-39-34.json \
+        /data9T/gaokaifeng/CausalSTDiT_working_dir/exp6.3_pure_causal_NoCfattn_tpe73/epoch5-global_step11000 \
+        working_dirSampleOutput/exps_prefix_perturb_t50/exp6.3_maxCond65 \
+        9981 0
     
+    # exp6.4 maxCond=41
+
+        bash scripts/inference2.sh \
+        configs/ablations_infer_on_SkyTimelapse/infer_withKVcache_maxCond41.py \
+        /data9T/gaokaifeng/CausalSTDiT_working_dir/exp6.4_pure_causal_NoCfattn_tpe49/training_config_backup.json \
+        /data9T/gaokaifeng/CausalSTDiT_working_dir/exp6.4_pure_causal_NoCfattn_tpe49/epoch3-global_step11000 \
+        working_dirSampleOutput/exps_prefix_perturb_t0/exp6.4_maxCond41 \
+        9981 2
+    # exp6.6 maxCond=9
+        bash scripts/inference2.sh \
+        configs/ablations_infer_on_SkyTimelapse/infer_withKVcache_maxCond9.py \
+        /data9T/gaokaifeng/CausalSTDiT_working_dir/exp6.6_pure_causal_NoCfattn_tpe17/training_config_backup.json \
+        /data9T/gaokaifeng/CausalSTDiT_working_dir/exp6.6_pure_causal_NoCfattn_tpe17/epoch1-global_step11000 \
+        working_dirSampleOutput/exps_prefix_perturb_t50/exp6.6_maxCond9 \
+        9981 2
+
+        
+    # exp7 maxCond=25
+        bash scripts/inference2.sh \
+        configs/ablations_infer_on_SkyTimelapse/infer_NoKVcache_maxCond25.py \
+        /data9T/gaokaifeng/CausalSTDiT_working_dir/exp7_fullattn_CfattnPp3_fixed_tpe33/training_config_backup.json2024-08-27T16-28-10.json \
+        /data9T/gaokaifeng/CausalSTDiT_working_dir/exp7_fullattn_CfattnPp3_fixed_tpe33/epoch2-global_step11000 \
+        working_dirSampleOutput/exps_prefix_perturb_t50/exp7_maxCond25 \
+        9981 1
+    
+    # exp7.2 maxCond=25
+        bash scripts/inference2.sh \
+        configs/ablations_infer_on_SkyTimelapse/infer_NoKVcache_maxCond25.py \
+        /data9T/gaokaifeng/CausalSTDiT_working_dir/exp7.2_fullattn_NoCfattn_fixed_tpe33/training_config_backup.json \
+        /data9T/gaokaifeng/CausalSTDiT_working_dir/exp7.2_fullattn_NoCfattn_fixed_tpe33/epoch2-global_step11000 \
+        working_dirSampleOutput/exps_prefix_perturb_t50/exp7.2_maxCond25 \
+        9982 2
+
+    # exp7.3 maxCond=41
+        bash scripts/inference2.sh \
+        configs/ablations_infer_on_SkyTimelapse/infer_NoKVcache_maxCond41.py \
+        /data9T/gaokaifeng/CausalSTDiT_working_dir/exp7.3_fullattn_NoCfattn_fixed_tpe49/training_config_backup.json2024-11-10T17-13-50.json \
+        /data9T/gaokaifeng/CausalSTDiT_working_dir/exp7.3_fullattn_NoCfattn_fixed_tpe49/epoch3-global_step11000 \
+        working_dirSampleOutput/exps_prefix_perturb_t50/exp7.3_maxCond41 \
+        9953 1
+    
+    # exp7.4 fixCond=8; given 8 frames
+        bash scripts/inference2.sh \
+        configs/ablations_infer_on_SkyTimelapse/infer_NoKVcache_fixCond8_given8frames.py \
+        /data9T/gaokaifeng/CausalSTDiT_working_dir/exp7.4_fullattn_NoCfattn_fixed_tpe16/training_config_backup.json2024-11-10T22-11-11.json \
+        /data9T/gaokaifeng/CausalSTDiT_working_dir/exp7.4_fullattn_NoCfattn_fixed_tpe16/epoch1-global_step11000 \
+        working_dirSampleOutput/exps_prefix_perturb_t50/exp7.4_fixCond8_given8 \
+        9984 1
+    # exp7.5 fixCond=1,8; given 1 frame
+        bash scripts/inference2.sh \
+        configs/ablations_infer_on_SkyTimelapse/infer_NoKVcache_fixCond1and8_given1frame.py \
+        /data9T/gaokaifeng/CausalSTDiT_working_dir/exp7.5_fullattn_NoCfattn_Cond1and8_fixed_tpe16/training_config_backup.json2024-11-11T11-40-59.json \
+        /data9T/gaokaifeng/CausalSTDiT_working_dir/exp7.5_fullattn_NoCfattn_Cond1and8_fixed_tpe16/epoch1-global_step11000 \
+        working_dirSampleOutput/exps_prefix_perturb_t50/exp7.5_fixCond1and8_given1 \
+        9988 1
+
+############### 2024-11-12 for cvpr2025 ######## For test infernece Speed ##########
+
+    # OS-fix fixCond=8; given 8 frames
+        bash scripts/inference2.sh \
+        configs/ablations_infer_on_SkyTimelapse/infer_NoKVcache_fixCond8_given8frames.py \    
+        /data9T/gaokaifeng/CausalSTDiT_working_dir/exp7.4_fullattn_NoCfattn_fixed_tpe16/training_config_backup.json2024-11-10T22-11-11.json \
+        /data9T/gaokaifeng/CausalSTDiT_working_dir/exp7.4_fullattn_NoCfattn_fixed_tpe16/epoch1-global_step11000 \
+        working_dirSampleOutput/exps_prefix_perturb_t50/exp7.4_fixCond8_given8 \
+        9984 1
+    
+    # OS-Ext maxCond=25
+    bash scripts/inference2.sh \
+        configs/ablations_infer_on_SkyTimelapse/infer_NoKVcache_maxCond25.py \
+        /data9T/gaokaifeng/CausalSTDiT_working_dir/exp7.2_fullattn_NoCfattn_fixed_tpe33/training_config_backup.json \
+        /data9T/gaokaifeng/CausalSTDiT_working_dir/exp7.2_fullattn_NoCfattn_fixed_tpe33/epoch2-global_step11000 \
+        working_dirSampleOutput/exps_prefix_perturb_t50/exp7.2_maxCond25 \
+        9982 2
 
 
 ### overfit-beach

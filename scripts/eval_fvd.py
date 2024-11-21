@@ -397,6 +397,17 @@ def eval_stepFVD(args):
         ar_steps_to_fids.update({ar_id:fids})
     print(ar_steps_to_fids)
     
+    # ar_steps_to_fids = {
+    #     0:[0,1,2,3,4,5,6,7],
+    #     1:[8, 9, 10, 11, 12, 13, 14, 15],
+    #     2:[16, 17, 18, 19, 20, 21, 22, 23],
+    #     3:[24, 25, 26, 27, 28, 29, 30, 31],
+    #     4:[32, 33, 34, 35, 36, 37, 38, 39],
+    #     5:[40, 41, 42, 43, 44, 45, 46, 47],
+    #     6:[48, 49, 50, 51, 52, 53, 54, 55]
+    # }
+    ar_steps_to_fids = {k:torch.as_tensor(v) for k,v in ar_steps_to_fids.items()}
+    print(ar_steps_to_fids)
     
     gen_feats = {ar_id:[] for ar_id in ar_steps[1:]}
     for batch in tqdm(gen_dataloader,desc="compute i3d feats for gen data"):
@@ -522,6 +533,12 @@ def eval_stepFVDtoGT(args):
         2:[17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32],
         3:[33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48]
     }
+    # ar_steps_to_fids = {
+    #     0:[0,1,2,3,4,5,6,7],
+    #     1:[8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23],
+    #     2:[24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39],
+    #     3:[40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55]
+    # }
     ar_steps_to_fids = {k:torch.as_tensor(v) for k,v in ar_steps_to_fids.items()}
     
     gen_feats = {ar_id:[] for ar_id in ar_steps[1:]}
@@ -575,12 +592,5 @@ if __name__ == "__main__":
         main(args)
     # gen_data_demo()
 
-    '''fvd results:
-
-    first frame as fake gen video: 
-        32 frames 256x256:  366.5194737086782
-        16 frames 256x256:  186.49447370742; 191.71750748020247; 174.61382794809907; 179.20583738264776
-    
-    /data/sample_outputs/14831e3e05cfd0b1d0a97c2ff2a6b3f5_debug_inference
-    16x256x256 fvd=180.3370887303169
+    '''
     '''

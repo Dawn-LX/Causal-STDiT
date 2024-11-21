@@ -124,7 +124,7 @@ def main(cfg):
     
     sampler = DistributedSampler(
         dataset,
-        shuffle=False,
+        shuffle=True,
         drop_last=False
     )
 

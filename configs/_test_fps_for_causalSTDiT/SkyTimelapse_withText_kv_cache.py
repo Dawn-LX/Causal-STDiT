@@ -44,9 +44,10 @@ if enable_kv_cache:
 dtype = "fp16"
 
 # update trained model keys: (use it cautiously for train/test mismatch)
-enable_flashattn = True
+enable_flashattn = False
 # cross_frame_attn= None
 caption_channels=4096
+temp_extra_in_channels=1
 
 # training:
 # max_seqlen=33, cond: [1,9,17,25]

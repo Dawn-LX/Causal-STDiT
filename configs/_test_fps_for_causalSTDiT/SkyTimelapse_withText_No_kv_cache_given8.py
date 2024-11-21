@@ -44,20 +44,20 @@ if enable_kv_cache:
 dtype = "fp16"
 
 # update trained model keys: (use it cautiously for train/test mismatch)
-enable_flashattn = True
+enable_flashattn = False
 # cross_frame_attn= None
 caption_channels=4096
-
+temp_extra_in_channels=1
+num_given_frames = max_condion_frames
 # training:
 # max_seqlen=33, cond: [1,9,17,25]
-_num_given_frames = max_condion_frames
 examples = [
     dict(
         prompt =  "a beautiful sky timelapse",
-        first_image =  [f"{_VAL_DATA_ROOT}/07U1fSrk9oI/07U1fSrk9oI_1/07U1fSrk9oI_frames_000000{_i}.jpg" for _i in range(46,46+_num_given_frames)],
+        first_image =  f"{_VAL_DATA_ROOT}/07U1fSrk9oI/07U1fSrk9oI_1/07U1fSrk9oI_frames_00000046.jpg",
 
         # the following configs will over-write those in `sample_cfgs`:
-        auto_regre_steps=10,
+        auto_regre_steps=20,
         seed = 555
     ), 
 ]

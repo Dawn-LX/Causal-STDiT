@@ -447,8 +447,10 @@ class CausalSTDiT2Block(nn.Module):
                 x_s = rearrange(x_s,"(B T) S C -> B (T S) C",T=T, S= S)
                 x = x + self.drop_path(gate_msa * x_s)
             
-            else: # for denoise, conditioned no cached spatial-kv
+            else: # for denoise, conditioned on cached spatial-kv
                 assert cached_kv_s is not None  # B T_p S C*2
+                if isinstance(T,torch.Tensor): # why ?
+                    T = int(T) 
                 assert  cached_kv_s.shape[1] == T_p
                 cached_kv_s = rearrange(cached_kv_s,"B T_p S C -> B (T_p S) C", T_p=T_p)
                 cached_kv_s = cached_kv_s[:,None,:,:].repeat_interleave(T,dim=1) # B T (T_p S) C*2
