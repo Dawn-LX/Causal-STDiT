@@ -35,7 +35,7 @@ text_encoder = dict(
 )
 
 # '''set them in configs/baselines/exps_list.py
-max_condion_frames = 25
+max_condion_frames = 41
 enable_kv_cache = True
 if enable_kv_cache:
     kv_cache_dequeue = True
@@ -56,7 +56,7 @@ examples = [
         first_image =  f"{_VAL_DATA_ROOT}/07U1fSrk9oI/07U1fSrk9oI_1/07U1fSrk9oI_frames_00000046.jpg",
 
         # the following configs will over-write those in `sample_cfgs`:
-        auto_regre_steps=20,
+        auto_regre_steps=10,
         seed = 555
     ), 
 ]

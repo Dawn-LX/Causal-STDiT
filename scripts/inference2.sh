@@ -93,7 +93,14 @@ torchrun \
     working_dirSampleOutput/exp6.4_pure_causal_NoCfattn_tpe49_with_kvCache_ppt50 \
     9986 0
     
-
+# exp6.5 causal cyclic-TPE w/ cf-attn maxCond=41,maxTPE=49
+    bash scripts/inference2.sh \
+    configs/ablations_infer_on_SkyTimelapse/infer_withKVcache_maxCond41.py \
+    /data/CausalSTDiT_working_dir/exp6.5_pure_causal_CfattnPp3_tpe49/training_config_backup.json \
+    /data/CausalSTDiT_working_dir/exp6.5_pure_causal_CfattnPp3_tpe49/epoch3-global_step11000 \
+    working_dirSampleOutput/exp6.5_pure_causal_CfattnPp3_tpe49_with_kvCache_ppt50 \
+    9986 0
+    
 
 
 ### overfit-beach

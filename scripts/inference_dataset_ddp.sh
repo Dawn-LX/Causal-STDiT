@@ -81,6 +81,14 @@ configs/baselines/infer_dataset_SkyTimelapse.py \
 
 
 ######## 2024-11-10 for cvpr2025
+    # exp6 causal cyclic-TPE w/ cf-attn maxCond=25,maxTPE=33
+
+    bash /home/gkf/project/CausalSTDiT/scripts/inference_dataset_ddp.sh \
+    /home/gkf/project/CausalSTDiT/configs/ddp_sample_skytimelapse/chunk8_MaxCond25_ArSteps6_withKVcache.py \
+    /data/CausalSTDiT_working_dir/exp6_pure_causal_CfattnPp3_tpe33/training_config_backup.json2024-08-26T19-34-35.json \
+    /data/CausalSTDiT_working_dir/exp6_pure_causal_CfattnPp3_tpe33/epoch2-global_step11000 \
+    /data/CausalSTDiT_working_dir/exp6CfAttnpp3_ddp_sample_49x256x256 \
+    9977 0
 
     # exp6.2 causal cyclic-TPE w/o cf-attn maxCond=25,maxTPE=33
         bash /home/gkf/project/CausalSTDiT/scripts/inference_dataset_ddp.sh \

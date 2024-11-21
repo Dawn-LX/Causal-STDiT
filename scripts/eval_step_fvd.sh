@@ -50,19 +50,24 @@ working_dirSampleOutput/eval_fvd 3
 
     # exp6
     bash scripts/eval_step_fvd.sh \
-    /data9T/gaokaifeng/CausalSTDiT_working_dir/exp6_ddp_sample_17x256x256/sampling_cfg_8ee3f15f3b85f99b68acf4ae2a179419_exp6_ddp_sample_17x256x256.json \
-    working_dirSampleOutput/eval_step_fvd/exp6_17frames 0
+    /data/CausalSTDiT_working_dir/exp6CfAttnpp3_ddp_sample_49x256x256/sampling_cfg_10b9d84d538171360734ae7130b697b1_exp6CfAttnpp3_ddp_sample_49x256x256.json \
+    working_dirSampleOutput/eval_step_fvd/exp6_to_gt 3
 
     # exp6.2
     bash scripts/eval_step_fvd.sh \
     /data/CausalSTDiT_working_dir/exp6.2_ddp_sample_49x256x256/sampling_cfg_66e009f115d466bfd2bc5930dc78d87c_exp6.2_ddp_sample_49x256x256.json \
-    working_dirSampleOutput/eval_step_fvd/exp6.2 1
+    working_dirSampleOutput/eval_step_fvd/exp6.2_to_gt 1
+
+    # exp6.2 31k
+    bash scripts/eval_step_fvd.sh \
+    /data/CausalSTDiT_working_dir/exp6.2_31k_ddpsample49x256x256/sampling_cfg_965a66e6d6cc73936821500fb412156f_exp6.2_31k_ddpsample49x256x256.json \
+    working_dirSampleOutput/eval_step_fvd/exp6.2_31k_to_gt 1
 
 
     # exp6.4
     bash scripts/eval_step_fvd.sh \
     /data/CausalSTDiT_working_dir/exp6.4_ddp_sample_49x256x256/sampling_cfg_cb7782f3eddb9d360790070b6de9fe00_exp6.4_ddp_sample_49x256x256.json \
-    working_dirSampleOutput/eval_step_fvd/exp6.4 2
+    working_dirSampleOutput/eval_step_fvd/exp6.4_to_gt 2
 
 # full-attn fixed TPE
 

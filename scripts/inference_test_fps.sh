@@ -61,4 +61,74 @@ torchrun \
     working_dirSampleOutput/test_fps_NoTxt/full_attn_MaxCondLen65 \
     9786 0
 
+########## test fps 2024-11-13
+
+    # exp6 w/ txt, w/ cf-attn, maxCond=25
+
+    bash /home/gkf/project/CausalSTDiT/scripts/inference_test_fps.sh \
+    configs/_test_fps_for_causalSTDiT/SkyTimelapse_withText_kv_cache.py \
+    /data/CausalSTDiT_working_dir/exp6_pure_causal_CfattnPp3_tpe33/training_config_backup.json2024-08-26T19-34-35.json \
+    /data/CausalSTDiT_working_dir/exp6_pure_causal_CfattnPp3_tpe33/epoch2-global_step11000 \
+    working_dirSampleOutput/test_fps_withTxt/exp6_maxCond25 \
+    9786 0
+
+    num_gen_frames=160, time_used=131.56, fps=1.22
+    num_gen_frames=120, time_used=98.71, fps=1.22
+    num_gen_frames=80, time_used=65.98, fps=1.21
+    
+
+    # exp6.2 w/ txt, w/o cf-attn, maxCond=25
+
+        bash /home/gkf/project/CausalSTDiT/scripts/inference_test_fps.sh \
+        configs/_test_fps_for_causalSTDiT/SkyTimelapse_withText_kv_cache.py \
+        /data/CausalSTDiT_working_dir/exp6.2_pure_causal_NoCfattn_tpe33/training_config_backup.json2024-09-30T15-54-59.json \
+        /data/CausalSTDiT_working_dir/exp6.2_pure_causal_NoCfattn_tpe33/epoch2-global_step11000 \
+        working_dirSampleOutput/test_fps_withTxt/exp6.2_maxCond25 \
+        9786 0
+        
+        num_gen_frames=80, time_used=52.08, fps=1.54
+
+    # exp6.4 w/ txt w/o cf-attn, maxCond=41
+        bash /home/gkf/project/CausalSTDiT/scripts/inference_test_fps.sh \
+        configs/_test_fps_for_causalSTDiT/SkyTimelapse_withText_kv_cache.py \
+        /data/CausalSTDiT_working_dir/exp6.4_pure_causal_NoCfattn_tpe49/training_config_backup.json \
+        /data/CausalSTDiT_working_dir/exp6.4_pure_causal_NoCfattn_tpe49/epoch3-global_step11000 \
+        working_dirSampleOutput/test_fps_withTxt/exp6.4_maxCond41 \
+        9781 0
+
+        num_gen_frames=80, time_used=53.58, fps=1.49
+
+    # exp7.2 w/ txt, w/o cf-attn, maxCond=25
+
+        bash /home/gkf/project/CausalSTDiT/scripts/inference_test_fps.sh \
+        configs/_test_fps_for_causalSTDiT/SkyTimelapse_withText_No_kv_cache.py \
+        /data/CausalSTDiT_working_dir/exp7.2_fullattn_NoCfattn_fixed_tpe33/training_config_backup.json \
+        /data/CausalSTDiT_working_dir/exp7.2_fullattn_NoCfattn_fixed_tpe33/epoch2-global_step11000 \
+        working_dirSampleOutput/test_fps_withTxt/exp7.2_maxCond25 \
+        9786 0
+
+        num_gen_frames=80, time_used=130.09, fps=0.61
+
+    # exp7.3 w/ txt w/o cf-attn maxCond=41
+        bash /home/gkf/project/CausalSTDiT/scripts/inference_test_fps.sh \
+        configs/_test_fps_for_causalSTDiT/SkyTimelapse_withText_No_kv_cache.py \
+        /data/CausalSTDiT_working_dir/exp7.3_fullattn_NoCfattn_fixed_tpe49/training_config_backup.json2024-11-10T17-13-50.json \
+        /data/CausalSTDiT_working_dir/exp7.3_fullattn_NoCfattn_fixed_tpe49/epoch3-global_step11000 \
+        working_dirSampleOutput/test_fps_withTxt/exp7.3_maxCond41 \
+        9786 0
+        
+        num_gen_frames=80, time_used=167.33, fps=0.48
+
+    # exp7.4 w/ txt w/o cf-attn, fixCond=8
+
+        bash /home/gkf/project/CausalSTDiT/scripts/inference_test_fps.sh \
+        configs/_test_fps_for_causalSTDiT/SkyTimelapse_withText_No_kv_cache_given8.py \
+        /data/CausalSTDiT_working_dir/exp7.4_fullattn_NoCfattn_fixed_tpe16/training_config_backup.json2024-11-10T22-11-11.json \
+        /data/CausalSTDiT_working_dir/exp7.4_fullattn_NoCfattn_fixed_tpe16/epoch1-global_step11000 \
+        working_dirSampleOutput/test_fps_withTxt/exp7.7_fixcond8 \
+        9786 0
+        
+        num_gen_frames=80, time_used=77.54, fps=1.03
+
+
 comment

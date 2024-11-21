@@ -35,7 +35,7 @@ text_encoder = dict(
 )
 
 # '''set them in configs/baselines/exps_list.py
-max_condion_frames = 41
+max_condion_frames = 8
 enable_kv_cache = False
 if enable_kv_cache:
     kv_cache_dequeue = True
@@ -50,10 +50,11 @@ caption_channels=4096
 
 # training:
 # max_seqlen=33, cond: [1,9,17,25]
+_num_given_frames = max_condion_frames
 examples = [
     dict(
         prompt =  "a beautiful sky timelapse",
-        first_image =  f"{_VAL_DATA_ROOT}/07U1fSrk9oI/07U1fSrk9oI_1/07U1fSrk9oI_frames_00000046.jpg",
+        first_image =  [f"{_VAL_DATA_ROOT}/07U1fSrk9oI/07U1fSrk9oI_1/07U1fSrk9oI_frames_000000{_i}.jpg" for _i in range(46,46+_num_given_frames)],
 
         # the following configs will over-write those in `sample_cfgs`:
         auto_regre_steps=10,
