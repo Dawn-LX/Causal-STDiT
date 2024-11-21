@@ -145,6 +145,11 @@ _ROOT_DATA_DIR = os.getenv("ROOT_DATA_DIR","/data")  #
         exp6.4_pure_causal_NoCfattn_tpe49 \
         9686 0
         
+        # w/o cf-attn maxCond9 maxTPE17
+        bash scripts/train.sh \
+        configs/ablations_on_SkyTimelapse/exp6.6_purecausal_attn_cyclic_tpe17_NoCfattn.py \
+        exp6.6_pure_causal_NoCfattn_tpe17 \
+        9686 1
 
     # pure causal  RoPE
     bash scripts/train.sh \

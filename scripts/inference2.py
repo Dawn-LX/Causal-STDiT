@@ -56,8 +56,22 @@ def build_validate_examples(examples_or_path,sample_cfgs,print_fn):
 
         first_image_path = example.pop("first_image",None)
         if first_image_path:
-            first_image = torchvision.io.read_image(first_image_path,torchvision.io.ImageReadMode.RGB) # (3,h,w)
-            first_image = transforms(first_image.unsqueeze(0)) # (1,3,h,w)
+            if isinstance(first_image_path,str):
+                first_image = torchvision.io.read_image(first_image_path,torchvision.io.ImageReadMode.RGB) # (3,h,w)
+                first_image = transforms(first_image.unsqueeze(0)) # (1,3,h,w); transforms accept TCHW
+                first_image = first_image.unsqueeze(2) # vae accept shape (B,C,T,H,W), here B=1,T=1
+            elif isinstance(first_image_path,list):
+                # i.e., input a short clip (several frames) as start
+                first_image = []
+                for _path in first_image_path:
+                    frame_i = torchvision.io.read_image(_path,torchvision.io.ImageReadMode.RGB) # (3,h,w)
+                    first_image.append(frame_i)
+                first_image = torch.stack(first_image,dim=0) # (T,C,H,W)
+                first_image = transforms(first_image)
+                first_image = first_image.permute(1,0,2,3) # (C,T,H,W)
+                first_image = first_image.unsqueeze(0) # vae accept shape (B,C,T,H,W), here B=1
+            else:
+                assert False, f"unsupport first_image_path={first_image_path}"
         else:
             first_image = None
         

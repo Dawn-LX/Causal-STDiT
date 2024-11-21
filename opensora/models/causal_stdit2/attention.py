@@ -174,8 +174,8 @@ class AttentionWithContext(nn.Module):
             dtype = q.dtype
             # k: (B,num_heads,N_cache + N,head_dim)
             q = q * self.scale # (B,num_heads,N,head_dim)
-            attn = q @ k.transpose(-2, -1)  # translate attn to float32
-            attn = attn.to(torch.float32)
+            attn = q @ k.transpose(-2, -1)  
+            attn = attn.to(torch.float32) # translate attn to float32
             
             # assert not self.is_causal, "TODO: manually set a causal attn mask"
             if self.is_causal:
@@ -195,7 +195,7 @@ class AttentionWithContext(nn.Module):
                     ],dim=1)
                 
                 attn_bias = torch.zeros(size=(len_q,len_k))
-                attn_bias.masked_fill_(attn_mask.logical_not(),float("-inf"))
+                attn_bias.masked_fill_(attn_mask.logical_not(),float("-inf")) # # 1 for keep, 0 for masked out
                 attn_bias = attn_bias.to(device=attn.device,dtype=attn.dtype)
 
                 attn = attn + attn_bias

@@ -397,6 +397,17 @@ def eval_stepFVD(args):
         ar_steps_to_fids.update({ar_id:fids})
     print(ar_steps_to_fids)
     
+    # ar_steps_to_fids = {
+    #     0:[0,1,2,3,4,5,6,7],
+    #     1:[8, 9, 10, 11, 12, 13, 14, 15],
+    #     2:[16, 17, 18, 19, 20, 21, 22, 23],
+    #     3:[24, 25, 26, 27, 28, 29, 30, 31],
+    #     4:[32, 33, 34, 35, 36, 37, 38, 39],
+    #     5:[40, 41, 42, 43, 44, 45, 46, 47],
+    #     6:[48, 49, 50, 51, 52, 53, 54, 55]
+    # }
+    ar_steps_to_fids = {k:torch.as_tensor(v) for k,v in ar_steps_to_fids.items()}
+    print(ar_steps_to_fids)
     
     gen_feats = {ar_id:[] for ar_id in ar_steps[1:]}
     for batch in tqdm(gen_dataloader,desc="compute i3d feats for gen data"):
@@ -515,40 +526,42 @@ def eval_stepFVDtoGT(args):
         gt_feats.append(feats)
 
 
-    ar_steps = [0,1,2,3,4,5,6]
-    ar_steps_to_fids = {0:torch.as_tensor([0])}
-    for ar_id in ar_steps[1:]:
-        sid = (ar_id-1)*8+1
-        fids = torch.as_tensor(range(sid,sid+8))
-        ar_steps_to_fids.update({ar_id:fids})
-    print(ar_steps_to_fids)
+    ar_steps = [0,1,2,3]
+    ar_steps_to_fids = {
+        0:[0],
+        1:[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16],
+        2:[17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32],
+        3:[33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48]
+    }
+    # ar_steps_to_fids = {
+    #     0:[0,1,2,3,4,5,6,7],
+    #     1:[8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23],
+    #     2:[24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39],
+    #     3:[40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55]
+    # }
+    ar_steps_to_fids = {k:torch.as_tensor(v) for k,v in ar_steps_to_fids.items()}
     
     gen_feats = {ar_id:[] for ar_id in ar_steps[1:]}
     for batch in tqdm(gen_dataloader,desc="compute i3d feats for gen data"):
         video_names = batch["video_name"]
         gen_videos:torch.Tensor = batch["video"] # (B,C,T,H,W), values in -1 ~ 1
         gen_videos = (gen_videos + 1) / 2.0  # -1~1 --> 0~1
-        assert ar_steps_to_fids[6][-1] == gen_videos.shape[2] - 1, f"gen_videos.shape={gen_videos.shape}"
+        assert ar_steps_to_fids[3][-1] == gen_videos.shape[2] - 1, f"gen_videos.shape={gen_videos.shape}"
         for ar_id,fids in ar_steps_to_fids.items():
             if ar_id ==0:
                 continue
-            fids:torch.Tensor
-            if len(fids) < 16:
-                # incase too short for downsample in I3D network (8 x downsample)
-                fids = fids.repeat_interleave(2,dim=0) 
-                # [1,2,3,4,5,6,7,8] --> [1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6, 7, 7, 8, 8]
             chunk_i = gen_videos[:,:,fids,:,:]
             feats_i:np.ndarray = _get_fvd_feats(chunk_i)
             gen_feats[ar_id].append(feats_i)
     
     chunk_gt = np.concatenate(gt_feats,axis=0)
     logger.info(f"chunk_gt:{chunk_gt.shape}")
-    fvd_to_chunk1 = dict()
-    for ar_id in ar_steps[1:]: # 1,2,3,4,5,6
+    fvd_to_gt = dict()
+    for ar_id in ar_steps[1:]: # 1,2,3
         chunk_i = np.concatenate(gen_feats[ar_id],axis=0)
         fvd_i = frechet_distance(chunk_i,chunk_gt)
-        fvd_to_chunk1[ar_id] = fvd_i
-    logger.info(f"fvd_to_chunk_gt={fvd_to_chunk1}")
+        fvd_to_gt[ar_id] = fvd_i
+    logger.info(f"fvd_to_chunk_gt={fvd_to_gt}")
     logger.info(f"results saved at log_path: {log_path}")
 
 if __name__ == "__main__":
@@ -579,12 +592,5 @@ if __name__ == "__main__":
         main(args)
     # gen_data_demo()
 
-    '''fvd results:
-
-    first frame as fake gen video: 
-        32 frames 256x256:  366.5194737086782
-        16 frames 256x256:  186.49447370742; 191.71750748020247; 174.61382794809907; 179.20583738264776
-    
-    /data/sample_outputs/14831e3e05cfd0b1d0a97c2ff2a6b3f5_debug_inference
-    16x256x256 fvd=180.3370887303169
+    '''
     '''

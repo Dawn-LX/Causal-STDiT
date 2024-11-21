@@ -28,7 +28,7 @@ from timm.models.vision_transformer import Mlp
 
 from opensora.acceleration.communications import all_to_all, split_forward_gather_backward
 from opensora.acceleration.parallel_states import get_sequence_parallel_group
-
+from opensora.utils.debug_utils import envs
 approx_gelu = lambda: nn.GELU(approximate="tanh")
 
 
@@ -321,6 +321,7 @@ class MultiHeadCrossAttention(nn.Module):
         self.attn_drop = nn.Dropout(attn_drop)
         self.proj = nn.Linear(d_model, d_model)
         self.proj_drop = nn.Dropout(proj_drop)
+        self.scale = self.head_dim**-0.5
 
     def forward(self, x, cond, mask=None):
         # query/value: img tokens; key: condition; mask: if padding tokens
@@ -330,12 +331,50 @@ class MultiHeadCrossAttention(nn.Module):
         kv = self.kv_linear(cond).view(1, -1, 2, self.num_heads, self.head_dim)
         k, v = kv.unbind(2)
 
-        attn_bias = None
-        if mask is not None:
-            attn_bias = xformers.ops.fmha.BlockDiagonalMask.from_seqlens([N] * B, mask)
-        x = xformers.ops.memory_efficient_attention(q, k, v, p=self.attn_drop.p, attn_bias=attn_bias)
+        
+        # assert False
+        if envs.DEBUG_TURNOFF_XFORMERS: # used for fvcore.nn.FlopCountAnalysis to calculate FLOPs
+            q = q.permute(0,2,1,3)
+            k = k.permute(0,2,1,3)
+            v = v.permute(0,2,1,3)  # (B,num_heads,seqlen,head_dim)
+            dtype  = q.dtype
 
-        x = x.view(B, -1, C)
+            # k: (B,num_heads,N_cache + N,head_dim)
+            q = q * self.scale # (B,num_heads,N,head_dim)
+            attn = q @ k.transpose(-2, -1)  # translate attn to float32
+
+            attn = attn.to(torch.float32) # translate attn to float32
+            len_k = k.shape[2]
+            len_q = q.shape[2]
+            # TODO
+            # if mask is not None:
+            #     assert False, "TODO"
+            #     attn_mask = torch.tril(torch.ones(size=(len_q,len_q)),diagonal=0).type(torch.bool) # 1 for keep, 0 for masked out
+
+            #     attn_bias = torch.zeros(size=(len_q,len_k))
+            #     attn_bias.masked_fill_(attn_mask.logical_not(),float("-inf")) # # 1 for keep, 0 for masked out
+            #     attn_bias = attn_bias.to(device=attn.device,dtype=attn.dtype)
+
+            #     attn = attn + attn_bias
+
+            attn = attn.softmax(dim=-1)
+            attn = attn.to(dtype)  # cast back attn to original dtype
+            attn = self.attn_drop(attn)
+            x = attn @ v
+            x = x.transpose(1, 2)
+            # print(x.shape)
+            x = x.reshape(B, -1, C)
+        else:
+            attn_bias = None
+            if mask is not None:
+                attn_bias = xformers.ops.fmha.BlockDiagonalMask.from_seqlens([N] * B, mask)
+            # print(attn_bias,N,B)
+            # print(mask)
+            x = xformers.ops.memory_efficient_attention(q, k, v, p=self.attn_drop.p, attn_bias=attn_bias)
+            # print(x.shape) # torch.Size([1, 256, 16, 72])
+            # assert False
+            x = x.view(B, -1, C)
+        
         x = self.proj(x)
         x = self.proj_drop(x)
         return x

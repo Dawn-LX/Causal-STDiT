@@ -35,7 +35,7 @@ text_encoder = dict(
 )
 
 # '''set them in configs/baselines/exps_list.py
-max_condion_frames = 25
+max_condion_frames = 41
 enable_kv_cache = False
 if enable_kv_cache:
     kv_cache_dequeue = True
@@ -44,10 +44,10 @@ if enable_kv_cache:
 dtype = "fp16"
 
 # update trained model keys: (use it cautiously for train/test mismatch)
-enable_flashattn = True
+enable_flashattn = False
 # cross_frame_attn= None
 caption_channels=4096
-
+temp_extra_in_channels=1
 # training:
 # max_seqlen=33, cond: [1,9,17,25]
 examples = [

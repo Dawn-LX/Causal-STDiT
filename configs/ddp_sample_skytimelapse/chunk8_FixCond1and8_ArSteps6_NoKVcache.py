@@ -21,7 +21,7 @@ val_data_cfg = dict(
     read_video = False,
     read_first_frame = True,
     class_balance_sample = True,
-    num_samples_total = 2048,
+    num_samples_total = 512,
 )
 
 batch_size = 4
@@ -43,8 +43,8 @@ sample_cfgs = dict(
     seed = "random"
 )
 
-max_condion_frames = 41
-enable_kv_cache = True
+max_condion_frames = 8
+enable_kv_cache = False
 if enable_kv_cache:
     kv_cache_dequeue = True
     kv_cache_max_seqlen = max_condion_frames

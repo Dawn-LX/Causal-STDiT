@@ -61,8 +61,18 @@ working_dirSampleOutput/eval_fvd 3
 
     # exp6.4
     bash scripts/eval_step_fvd.sh \
-    /data/CausalSTDiT_working_dir/exp6.4_ddp_sample_49x256x256/sampling_cfg_cb7782f3eddb9d360790070b6de9fe00_exp6.4_ddp_sample_49x256x256.json \
-    working_dirSampleOutput/eval_step_fvd/exp6.4 2
+    /data9T/gaokaifeng/CausalSTDiT_working_dir/exp6.4ckpt11k_ddpsample_49x256x256/sampling_cfg_98b18250db41725f7ee7d0496483eed4_exp6.4ckpt11k_ddpsample_49x256x256.json \
+    working_dirSampleOutput/eval_step_fvd/exp6.4_11k 0
+
+    # exp6.5
+    bash scripts/eval_step_fvd.sh \
+    /data9T/gaokaifeng/CausalSTDiT_working_dir/exp6.5ckpt11k_ddpsample_49x256x256/sampling_cfg_b4708ba8e8310df254f5a23c4d272c44_exp6.5ckpt11k_ddpsample_49x256x256.json \
+    working_dirSampleOutput/eval_step_fvd/exp6.5_11k_to_GT 2
+
+    # exp6.6
+    bash scripts/eval_step_fvd.sh \
+    /data9T/gaokaifeng/CausalSTDiT_working_dir/exp6.6ckpt11k_ddpsample_49x256x256/sampling_cfg_a3c3670b452141906a9a07e2625f8323_exp6.6ckpt11k_ddpsample_49x256x256.json \
+    working_dirSampleOutput/eval_step_fvd/exp6.6_11k_to_gt 0
 
 # full-attn fixed TPE
 
@@ -74,6 +84,18 @@ working_dirSampleOutput/eval_fvd 3
         bash scripts/eval_step_fvd.sh \
         /data9T/gaokaifeng/CausalSTDiT_working_dir/exp7.2_ddp_sample_49x256x256/sampling_cfg_c392b906626f6a776cf81b2c39edf997_exp7.2_ddp_sample_49x256x256.json \
         working_dirSampleOutput/eval_step_fvd/exp7.2_to_gt 0
+
+    # exp7.4
+    
+    bash scripts/eval_step_fvd.sh \
+    /data9T/gaokaifeng/CausalSTDiT_working_dir/exp7.4_ddp_sample_6stepx256x256/sampling_cfg_91d28521d49cdc4f885bbebb919b3975_exp7.4_ddp_sample_6stepx256x256.json \
+    working_dirSampleOutput/eval_step_fvd/exp7.4_to_gt 2
+    
+    # exp7.5
+    bash scripts/eval_step_fvd.sh \
+    /data9T/gaokaifeng/CausalSTDiT_working_dir/exp7.5_ddp_sample_6stepx256x256/sampling_cfg_91b3cb8a95bc24d42b619fe2118fbf11_exp7.5_ddp_sample_6stepx256x256.json \
+    working_dirSampleOutput/eval_step_fvd/exp7.5_to_gt 2
+
 
     /data/CausalSTDiT_working_dir/exp6.2_ddp_sample_49x256x256/sampling_cfg_66e009f115d466bfd2bc5930dc78d87c_exp6.2_ddp_sample_49x256x256.json
     "/data/sample_outputs/66e009f115d466bfd2bc5930dc78d87c_exp6.2_ddp_sample_49x256x256",

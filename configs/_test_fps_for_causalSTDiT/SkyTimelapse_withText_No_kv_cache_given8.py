@@ -35,8 +35,8 @@ text_encoder = dict(
 )
 
 # '''set them in configs/baselines/exps_list.py
-max_condion_frames = 41
-enable_kv_cache = True
+max_condion_frames = 8
+enable_kv_cache = False
 if enable_kv_cache:
     kv_cache_dequeue = True
     kv_cache_max_seqlen = max_condion_frames
@@ -48,7 +48,7 @@ enable_flashattn = False
 # cross_frame_attn= None
 caption_channels=4096
 temp_extra_in_channels=1
-
+num_given_frames = max_condion_frames
 # training:
 # max_seqlen=33, cond: [1,9,17,25]
 examples = [
