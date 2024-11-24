@@ -22,17 +22,8 @@ from opensora.utils.misc import (
     to_torch_dtype,
     load_jsonl
 )
+from opensora.utils.video_gen import autoregressive_sample,autoregressive_sample_kv_cache
 from opensora.utils.debug_utils import envs
-'''
-        for i in range(world_size):
-            if i == rank:  # Write files sequentially
-                fout = open(out_path, 'a')
-                for (recov, ref, src) in zip(word_lst_recover, word_lst_ref, word_lst_source):
-                    print(json.dumps({"recover": recov, "reference": ref, "source": src}), file=fout)
-                fout.close()
-            dist.barrier()
-'''
-
 
 
 @torch.no_grad()
@@ -96,7 +87,7 @@ def main(cfg):
     
     vae = build_module(cfg.vae, MODELS)
     
-    input_size = (cfg.sample_cfgs.num_frames, cfg.sample_cfgs.width, cfg.sample_cfgs.height)
+    input_size = (1, cfg.sample_cfgs.width, cfg.sample_cfgs.height)
     latent_size = vae.get_latent_size(input_size)
     assert os.path.exists(cfg.ckpt_path)
     cfg.model.from_pretrained = cfg.ckpt_path
@@ -123,7 +114,7 @@ def main(cfg):
     
     sampler = DistributedSampler(
         dataset,
-        shuffle=False,
+        shuffle=True,
         drop_last=False
     )
 
@@ -141,49 +132,70 @@ def main(cfg):
     # ==========================================================================================
 
     assert vae.patch_size[0] == 1, "TODO: consider temporal patchify"
+    vae.micro_batch_size = 33
     
-    # with tqdm(
-    #     range(start_step, num_steps_per_epoch),
-    #     disable=not is_master(),
-    # ) as pbar:
-    #     pass
+    scheduler = build_module(cfg.scheduler,SCHEDULERS)
+    assert cfg.get("clean_prefix",True), "TODO add code for non first frame conditioned"
+    assert cfg.get("clean_prefix_set_t0",True)
+    if enable_kv_cache := cfg.get("enable_kv_cache",False):
+        sample_func = autoregressive_sample_kv_cache
+        additional_kwargs = dict(
+            kv_cache_dequeue = cfg.kv_cache_dequeue,
+            kv_cache_max_seqlen = cfg.kv_cache_max_seqlen,
+        )
+        # `kv_cache_max_seqlen` serves as `max_condion_frames` for sampling w/ kv-cache
+    else:
+        sample_func = autoregressive_sample
+        additional_kwargs = dict(
+            max_condion_frames = cfg.max_condion_frames
+        )
+    additional_kwargs.update(dict(
+        progressive_alpha=cfg.get("progressive_alpha",-1),
+        prefix_perturb_t = cfg.get("prefix_perturb_t",-1)
+    ))
+
     
-    val_scheduler = build_module(cfg.val_scheduler,SCHEDULERS)
-    
-    sample_func = val_scheduler.sample_with_kv_cache if cfg.enable_kv_cache else val_scheduler.sample
     sample_cfgs = cfg.sample_cfgs
-    input_size = (sample_cfgs.num_frames, sample_cfgs.height, sample_cfgs.width)
+    input_size = (sample_cfgs.auto_regre_chunk_len, sample_cfgs.height, sample_cfgs.width)
     latent_size = vae.get_latent_size(input_size)
     z_size = (vae.out_channels, *latent_size)
-    
+    auto_regre_steps = sample_cfgs.auto_regre_steps
+
     for batch in tqdm(dataloader,disable=not is_master()):
         
         video_names = batch["video_name"]
         prompts = batch["text"] if text_encoder is not None else [None]*len(video_names)
-        first_frame = batch["first_frame"]  # (B, C, 1, H, W)
-        first_frame = first_frame.to(device=device,dtype=dtype)
-        first_frame_latents = vae.encode(first_frame) # vae accept shape (B,C,T,H,W)
+        if dataset.read_first_frame:
+            first_frame = batch["first_frame"]  # (B, C, 1, H, W)
+            first_frame = first_frame.to(device=device,dtype=dtype)
+            first_frame_latents = vae.encode(first_frame) # vae accept shape (B,C,T,H,W)
+        else:
+            assert dataset.read_video
+            video = batch["video"] # (B, C, T, H, W)
+            cond_len = cfg.max_condion_frames  # e.g., T//2
+            cond_video = video[:,:,:cond_len,:,:].to(device=device,dtype=dtype)
+            first_frame_latents = vae.encode(cond_video) # vae accept shape (B,C,T,H,W)
 
         
-        samples = sample_func(
-            model,
-            text_encoder,
-            z_size=z_size,
-            window_size=sample_cfgs.auto_regre_chunk_len,
-            prompts=prompts,
-            first_img_latents=first_frame_latents, # (B,C,1,H,W)
-            use_predicted_first_img = False,
-            txt_guidance_scale = sample_cfgs.txt_guidance_scale,
-            img_guidance_scale = sample_cfgs.img_guidance_scale,
+        current_seed = sample_cfgs.seed
+        if current_seed == "random":
+            current_seed = int(str(datetime.now().timestamp()).split('.')[-1][:4])
 
-            clean_prefix = cfg.clean_prefix,
-            clean_prefix_set_t0 = cfg.clean_prefix_set_t0,
-            kv_cache_dequeue = cfg.kv_cache_dequeue,
-            kv_cache_max_seqlen = cfg.kv_cache_max_seqlen,
-            device = device,
-            progress_bar = cfg.verbose
-        ) # (B, C, T, H, W)
-
+        samples,time_used,num_gen_frames = sample_func(
+            scheduler, 
+            model, 
+            text_encoder, 
+            z_size = z_size, 
+            prompts = prompts,
+            cond_frame_latents=first_frame_latents, # (B,C,1,H,W)
+            ar_steps = auto_regre_steps,
+            seed = current_seed,
+            verbose=False,
+            **additional_kwargs
+        ) # (1, C, T, H, W)
+        # fps = num_gen_frames / time_used
+        # print(f"num_gen_frames={num_gen_frames}, time_used={time_used:.2f}, fps={fps:.2f}")
+        
         samples = vae.decode(samples.to(dtype=dtype)) # (B, C, T, H, W)
         for rank_id in range(dist.get_world_size()): # Write files sequentially
             for idx in range(samples.shape[0]):
@@ -213,8 +225,14 @@ def merge_args(cfg,train_cfg,args):
     assert args.ckpt_path is not None
     cfg.model.from_pretrained = args.ckpt_path
 
+    if "prefix_perturb_t" in cfg.keys():
+        # maybe change the prefix_perturb_t at test time
+        pass
+    else:
+        cfg.update(prefix_perturb_t = train_cfg.prefix_perturb_t)
+
     default_cfgs = dict(
-        dtype = "bf16",
+        dtype = "fp16",
         batch_size = 2,
         verbose = True,
         enable_kv_cache = True,
@@ -229,7 +247,7 @@ def merge_args(cfg,train_cfg,args):
     for k, v in vars(args).items():
         if v is not None:
             cfg[k] = v
-    
+
 
     return cfg
 

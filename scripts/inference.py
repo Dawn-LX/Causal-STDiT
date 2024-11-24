@@ -1,174 +1,246 @@
-import os
 
-import colossalai
+import argparse
+import os
+import gc
+from datetime import timedelta,datetime
+import json
+from easydict import EasyDict
+
+
 import torch
 import torch.distributed as dist
-from colossalai.cluster import DistCoordinator
-from mmengine.runner import set_random_seed
+import torchvision
 
-from opensora.acceleration.parallel_states import set_sequence_parallel_group
-from opensora.datasets import IMG_FPS, save_sample
-from opensora.models.text_encoder.t5 import text_preprocessing
-from opensora.registry import MODELS, SCHEDULERS, build_module
-from opensora.utils.config_utils import parse_configs
-from opensora.utils.misc import to_torch_dtype
+from mmengine.config import Config
+
+from colossalai.utils import get_current_device, set_seed
+from opensora.datasets import video_transforms
+
+from opensora.registry import DATASETS, MODELS, SCHEDULERS, build_module
+from opensora.utils.ckpt_utils import create_logger
+from opensora.utils.misc import (
+    to_torch_dtype,
+    load_jsonl
+)
+from opensora.utils.video_gen import validation_visualize
+from opensora.utils.debug_utils import envs
 
 
-def main():
-    # ======================================================
-    # 1. cfg and init distributed env
-    # ======================================================
-    cfg = parse_configs(training=False)
-    print(cfg)
-
-    # init distributed
-    if os.environ.get("WORLD_SIZE", None):
-        use_dist = True
-        colossalai.launch_from_torch({})
-        coordinator = DistCoordinator()
-
-        if coordinator.world_size > 1:
-            set_sequence_parallel_group(dist.group.WORLD)
-            enable_sequence_parallelism = True
-        else:
-            enable_sequence_parallelism = False
+def build_validate_examples(examples_or_path,sample_cfgs,print_fn):
+    if isinstance(examples_or_path,str):
+        examples = load_jsonl(examples_or_path)
     else:
-        use_dist = False
-        enable_sequence_parallelism = False
+        examples = examples_or_path
+    assert isinstance(examples,list) and isinstance(examples[0],dict)
 
+    transforms = torchvision.transforms.Compose(
+        [
+            video_transforms.ToTensorVideo(), # TCHW, normalize to 0~1
+            video_transforms.ResizeCenterCropVideo(sample_cfgs.height), #
+            torchvision.transforms.Normalize(mean=[0.5,0.5,0.5],std=[0.5,0.5,0.5],inplace=True) # To -1 ~ 1
+        ]
+    )
+
+    print_fn("=="*30 + "use the following validation data"+"=="*30)
+    examples_ = []
+    for idx, example in enumerate(examples):
+        prompt = example.pop("prompt")
+        common_quality_prompt = sample_cfgs.get("common_quality_prompt",None)
+        if common_quality_prompt:
+            prompt = prompt + ', ' + common_quality_prompt
+        # NOTE negative prompt is not used as in diffusers. Here we use text_encoder.null (i.e., text_encoder.y_embedder)
+
+        first_image_path = example.pop("first_image",None)
+        if first_image_path:
+            if isinstance(first_image_path,str):
+                first_image = torchvision.io.read_image(first_image_path,torchvision.io.ImageReadMode.RGB) # (3,h,w)
+                first_image = transforms(first_image.unsqueeze(0)) # (1,3,h,w); transforms accept TCHW
+                first_image = first_image.unsqueeze(2) # vae accept shape (B,C,T,H,W), here B=1,T=1
+            elif isinstance(first_image_path,list):
+                # i.e., input a short clip (several frames) as start
+                first_image = []
+                for _path in first_image_path:
+                    frame_i = torchvision.io.read_image(_path,torchvision.io.ImageReadMode.RGB) # (3,h,w)
+                    first_image.append(frame_i)
+                first_image = torch.stack(first_image,dim=0) # (T,C,H,W)
+                first_image = transforms(first_image)
+                first_image = first_image.permute(1,0,2,3) # (C,T,H,W)
+                first_image = first_image.unsqueeze(0) # vae accept shape (B,C,T,H,W), here B=1
+            else:
+                assert False, f"unsupport first_image_path={first_image_path}"
+        else:
+            first_image = None
+        
+        data_dict = EasyDict(sample_cfgs.to_dict())
+        data_dict.update(EasyDict(dict(
+            seed = sample_cfgs.get("seed","random"), # if "random", we will generate a seed according to datetime.now()
+            first_image = first_image,
+            prompt = prompt,
+        )))
+        # update other cfgs, if any, e.g., num_frames, seed, guidance_scale
+        data_dict.update(example)
+        examples_.append(data_dict)
+
+        print_fn(f"idx-{idx}: ")
+        for k,v in data_dict.items():
+            if k=="first_image": v=first_image_path
+            print_fn(f"   {k}:{v}")
+    
+    return examples_
+
+@torch.no_grad()
+def main(cfg):
+     # ======================================================
+    # 2. runtime variables & colossalai launch
     # ======================================================
-    # 2. runtime variables
-    # ======================================================
-    torch.set_grad_enabled(False)
-    torch.backends.cuda.matmul.allow_tf32 = True
-    torch.backends.cudnn.allow_tf32 = True
-    device = "cuda" if torch.cuda.is_available() else "cpu"
+    assert torch.cuda.is_available(), "Training currently requires at least one GPU."
+    # assert cfg.dtype in ["fp16", "bf16"], f"Unknown mixed precision {cfg.dtype}"
+
+    # 2.1. colossalai init distributed training
+    # we set a very large timeout to avoid some processes exit early
+    if not dist.is_initialized():
+        dist.init_process_group(backend="nccl", timeout=timedelta(hours=24))
+    torch.cuda.set_device(dist.get_rank() % torch.cuda.device_count())
+    set_seed(1024)
+    device = get_current_device()
     dtype = to_torch_dtype(cfg.dtype)
-    set_random_seed(seed=cfg.seed)
-    prompts = cfg.prompt
+
+    def is_master():
+        return dist.get_rank() == 0
+
+    # 2.2. init logger, tensorboard
+    exp_dir = cfg.exp_dir
+    
+    os.makedirs(exp_dir,exist_ok=True)
+    logger = create_logger(exp_dir)
+    logger.info(f"Experiment directory created at {exp_dir}")
+    
+    # backup sample configs:
+    _backup_path = os.path.join(exp_dir, f"sampling_cfg_backup.json")
+    cfg.update(dict(
+        local_time_now = datetime.now().strftime("%Y-%m-%dT%H-%M-%S"),
+        utc_time_now = datetime.utcnow().strftime("%Y-%m-%dT%H-%M-%S"),
+    ))
+    with open(_backup_path, "w") as f:
+        json.dump(cfg._cfg_dict, f, indent=4)
+    logger.info(f"Backup sampling config at {_backup_path}")
+
 
     # ======================================================
-    # 3. build model & load weights
+    # 4. build model
     # ======================================================
-    # 3.1. build model
-    input_size = (cfg.num_frames, *cfg.image_size)
+    # 4.1. build model
+    text_encoder = build_module(cfg.get("text_encoder", None), MODELS, device=device)
+    if text_encoder is not None:
+        text_encoder_output_dim = text_encoder.output_dim
+        text_encoder_model_max_length = text_encoder.model_max_length
+    else:
+        text_encoder_output_dim = cfg.model.caption_channels
+        text_encoder_model_max_length = 0
+    
     vae = build_module(cfg.vae, MODELS)
+    
+    input_size = (1, cfg.sample_cfgs.width, cfg.sample_cfgs.height)
     latent_size = vae.get_latent_size(input_size)
-    text_encoder = build_module(cfg.text_encoder, MODELS, device=device)  # T5 must be fp32
-
+    assert os.path.exists(cfg.ckpt_path)
+    cfg.model.from_pretrained = cfg.ckpt_path
     model = build_module(
         cfg.model,
         MODELS,
         input_size=latent_size,
         in_channels=vae.out_channels,
-        caption_channels=text_encoder.output_dim,
-        model_max_length=text_encoder.model_max_length,
-        enable_sequence_parallelism=enable_sequence_parallelism,
+        caption_channels=text_encoder_output_dim,
+        model_max_length=text_encoder_model_max_length
     )
-    text_encoder.y_embedder = model.y_embedder  # hack for classifier-free guidance
+    if text_encoder is not None:
+        text_encoder.y_embedder = model.y_embedder  # hack for classifier-free guidance
 
-    # 3.2. move to device & eval
-    vae = vae.to(device, dtype).eval()
-    model = model.to(device, dtype).eval()
 
-    # 3.3. build scheduler
-    scheduler = build_module(cfg.scheduler, SCHEDULERS)
+    # 4.3. move to device
+    vae = vae.to(device, dtype)
+    model = model.to(device, dtype)
+    model.eval()
+    vae.eval()
+    
+    assert vae.patch_size[0] == 1, "TODO: consider temporal patchify"
+    
+    val_examples = cfg.get("examples",None)
+    val_examples = val_examples if val_examples is not None else cfg.examples_json 
+    val_examples = build_validate_examples(val_examples,cfg.sample_cfgs,print_fn=logger.info)
+    global_step = cfg.ckpt_path.split("global_step")[-1]
+    try:
+        global_step = int(global_step)
+    except:
+        assert False, f"global_step={global_step}"
+    
+    validation_visualize(model,vae,text_encoder,val_examples,cfg,exp_dir,writer=None,global_step=global_step)
 
-    # 3.4. support for multi-resolution
-    model_args = dict()
-    if cfg.multi_resolution == "PixArtMS":
-        image_size = cfg.image_size
-        hw = torch.tensor([image_size], device=device, dtype=dtype).repeat(cfg.batch_size, 1)
-        ar = torch.tensor([[image_size[0] / image_size[1]]], device=device, dtype=dtype).repeat(cfg.batch_size, 1)
-        model_args["data_info"] = dict(ar=ar, hw=hw)
-    elif cfg.multi_resolution == "STDiT2":
-        image_size = cfg.image_size
-        height = torch.tensor([image_size[0]], device=device, dtype=dtype).repeat(cfg.batch_size)
-        width = torch.tensor([image_size[1]], device=device, dtype=dtype).repeat(cfg.batch_size)
-        num_frames = torch.tensor([cfg.num_frames], device=device, dtype=dtype).repeat(cfg.batch_size)
-        ar = torch.tensor([image_size[0] / image_size[1]], device=device, dtype=dtype).repeat(cfg.batch_size)
-        if cfg.num_frames == 1:
-            cfg.fps = IMG_FPS
-        fps = torch.tensor([cfg.fps], device=device, dtype=dtype).repeat(cfg.batch_size)
-        model_args["height"] = height
-        model_args["width"] = width
-        model_args["num_frames"] = num_frames
-        model_args["ar"] = ar
-        model_args["fps"] = fps
-
-    # ======================================================
-    # 4. inference
-    # ======================================================
-    sample_idx = 0
-    if cfg.sample_name is not None:
-        sample_name = cfg.sample_name
-    elif cfg.prompt_as_path:
-        sample_name = ""
+def merge_args(cfg,train_cfg,args):
+    cfg.update(dict(
+        model = train_cfg.model,
+        vae = train_cfg.vae,
+        clean_prefix = train_cfg.clean_prefix,
+        clean_prefix_set_t0 = train_cfg.clean_prefix_set_t0,
+    ))
+    if "prefix_perturb_t" in cfg.keys():
+        # maybe change the prefix_perturb_t at test time
+        pass
     else:
-        sample_name = "sample"
-    save_dir = cfg.save_dir
-    os.makedirs(save_dir, exist_ok=True)
+        cfg.update(prefix_perturb_t = train_cfg.prefix_perturb_t)
 
-    # 4.1. batch generation
-    for i in range(0, len(prompts), cfg.batch_size):
-        # 4.2 sample in hidden space
-        batch_prompts_raw = prompts[i : i + cfg.batch_size]
-        batch_prompts = [text_preprocessing(prompt) for prompt in batch_prompts_raw]
-        # handle the last batch
-        if len(batch_prompts_raw) < cfg.batch_size and cfg.multi_resolution == "STDiT2":
-            model_args["height"] = model_args["height"][: len(batch_prompts_raw)]
-            model_args["width"] = model_args["width"][: len(batch_prompts_raw)]
-            model_args["num_frames"] = model_args["num_frames"][: len(batch_prompts_raw)]
-            model_args["ar"] = model_args["ar"][: len(batch_prompts_raw)]
-            model_args["fps"] = model_args["fps"][: len(batch_prompts_raw)]
+    if "text_encoder" in cfg.keys():
+        # maybe change the configs of text_encoder at test time
+        pass
+    else:
+        cfg.update(text_encoder = train_cfg.text_encoder)
+    
+    assert args.ckpt_path is not None
+    cfg.model.from_pretrained = args.ckpt_path
 
-        # 4.3. diffusion sampling
-        old_sample_idx = sample_idx
-        # generate multiple samples for each prompt
-        for k in range(cfg.num_sample):
-            sample_idx = old_sample_idx
+    default_cfgs = dict(
+        dtype = "bf16",
+        batch_size = 2,
+        verbose = True,
+        enable_kv_cache = True,
+        kv_cache_dequeue = True,
+        kv_cache_max_seqlen = 65,
+    )
+    
 
-            # Skip if the sample already exists
-            # This is useful for resuming sampling VBench
-            if cfg.prompt_as_path:
-                skip = True
-                for batch_prompt in batch_prompts_raw:
-                    path = os.path.join(save_dir, f"{sample_name}{batch_prompt}")
-                    if cfg.num_sample != 1:
-                        path = f"{path}-{k}"
-                    path = f"{path}.mp4"
-                    if not os.path.exists(path):
-                        skip = False
-                        break
-                if skip:
-                    continue
+    for k, v in default_cfgs.items():
+        if k not in cfg:
+            cfg[k] = v
+    
+    for k, v in vars(args).items():
+        if v is not None:
+            cfg[k] = v
+    
+    # update model config at inference time:
+    # e.g., train w/ seq_parallel and inference w/o seq_parallel
+    # e.g., enable_sequence_parallelism, enable_flashattn, etc.
+    from copy import deepcopy
+    model_kwargs = deepcopy(cfg.model)
+    for k, v in cfg.items():
+        for k_model in cfg.model.keys():
+            if k==k_model:
+                model_kwargs.update({k_model:v})
+    cfg.update(model=model_kwargs)
 
-            # sampling
-            z = torch.randn(len(batch_prompts), vae.out_channels, *latent_size, device=device, dtype=dtype)
-            samples = scheduler.sample(
-                model,
-                text_encoder,
-                z=z,
-                prompts=batch_prompts,
-                device=device,
-                additional_args=model_args,
-            )
-            samples = vae.decode(samples.to(dtype))
-
-            # 4.4. save samples
-            if not use_dist or coordinator.is_master():
-                for idx, sample in enumerate(samples):
-                    print(f"Prompt: {batch_prompts_raw[idx]}")
-                    if cfg.prompt_as_path:
-                        sample_name_suffix = batch_prompts_raw[idx]
-                    else:
-                        sample_name_suffix = f"_{sample_idx}"
-                    save_path = os.path.join(save_dir, f"{sample_name}{sample_name_suffix}")
-                    if cfg.num_sample != 1:
-                        save_path = f"{save_path}-{k}"
-                    save_sample(sample, fps=cfg.fps // cfg.frame_interval, save_path=save_path)
-                    sample_idx += 1
+    return cfg
 
 
 if __name__ == "__main__":
-    main()
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--config",type=str, default="./configs/default.py",help="training config")
+    parser.add_argument("--train_config",type=str, default=None)
+    parser.add_argument("--ckpt_path",type=str, default=None)
+    parser.add_argument("--exp_dir",type=str, default=None)
+    parser.add_argument("--verbose", action='store_true')
+    args = parser.parse_args()
+
+    configs = Config.fromfile(args.config)
+    train_configs = Config.fromfile(args.train_config)
+    configs = merge_args(configs,train_configs,args)
+
+    main(configs)
+
