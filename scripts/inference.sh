@@ -1,5 +1,5 @@
 if test -d "/data"; then
-    # for server 10.130.129.11
+    # for server A100
     export CODE_ROOT="/home/gkf/project/CausalSTDiT"
     
     export ROOT_CKPT_DIR="/home/gkf/LargeModelWeightsFromHuggingFace"
@@ -7,7 +7,7 @@ if test -d "/data"; then
     export ROOT_OUTPUT_DIR="/data/CausalSTDiT_working_dir"
     echo "on server A100"
 else
-    # for server 10.130.129.34
+    # for server A6000
     export CODE_ROOT="/data9T/gaokaifeng/project/CausalSTDiT"
 
     export ROOT_CKPT_DIR="/data9T/gaokaifeng/LargeModelWeightsFromHuggingFace"
@@ -32,12 +32,6 @@ NUM_GPUS=$(echo $CUDA_VISIBLE_DEVICES | awk -F',' '{print NF}')
 
 export IS_DEBUG=1
 export DEBUG_WITHOUT_LOAD_PRETRAINED=0
-export DEBUG_KV_CACHE2=0
-export DEBUG_KV_CACHE3=0
-# export TENSOR_SAVE_DIR="/home/gkf/project/CausalSTDiT/working_dirSampleOutput/_debug_KVcache_wo_CfAttn"
-# export TENSOR_SAVE_DIR="/home/gkf/project/CausalSTDiT/working_dirSampleOutput/_debug_KVcache"
-export TENSOR_SAVE_DIR="/home/gkf/project/CausalSTDiT/working_dirSampleOutput/_debugReorganizedTpeMaxCondLen25"
-export KV_CACHE_TAG=${EXP_DIR:${#EXP_DIR}-15}
 
 torchrun \
     --nnodes=1 \
@@ -51,24 +45,22 @@ torchrun \
 
 <<comment
 
+## overfit beach
+    bash scripts/inference.sh \
+    configs/causal_stdit/infer_beach_withKVcache.py \
+    working_dir/overfit_demo/training_config_backup.json \
+    /path/to/checkpoint/ \
+    working_dir/overfit_demo/inference \
+    9981 0
 
-### pp_t=50
+## SkyTimelapse
+    bash scripts/inference.sh \
+    configs/causal_stdit/infer_SkyTimelapse_withKVcache.py \
+    working_dir/skytimelapse_demo/training_config_backup.json \
+    /path/to/checkpoint/ \
+    working_dir/skytimelapse_demo/inference \
+    9981 0
 
-    # exp6 maxCOnd=25
-        bash scripts/inference.sh \
-        configs/ablations_infer_on_SkyTimelapse/infer_withKVcache_maxCond25.py \
-        /data9T/gaokaifeng/CausalSTDiT_working_dir/exp6_pure_causal_CfattnPp3_tpe33/training_config_backup.json2024-08-26T19-34-35.json \
-        /data9T/gaokaifeng/CausalSTDiT_working_dir/exp6_pure_causal_CfattnPp3_tpe33/epoch2-global_step11000 \
-        working_dirSampleOutput/exps_prefix_perturb_t50/exp6_maxCond25 \
-        9981 1
-
-    # exp6.2 maxCond=25
-        bash scripts/inference.sh \
-        configs/ablations_infer_on_SkyTimelapse/infer_withKVcache_maxCond25.py \
-        /data9T/gaokaifeng/CausalSTDiT_working_dir/exp6.2_pure_causal_NoCfattn_tpe33/training_config_backup.json2024-09-30T15-54-59.json \
-        /data9T/gaokaifeng/CausalSTDiT_working_dir/exp6.2_pure_causal_NoCfattn_tpe33/epoch2-global_step11000 \
-        working_dirSampleOutput/exps_prefix_perturb_t50/exp6.2_maxCond25 \
-        9982 2
 
 
 comment

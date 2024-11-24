@@ -590,7 +590,4 @@ if __name__ == "__main__":
         eval_stepFVDtoGT(args)
     else:
         main(args)
-    # gen_data_demo()
 
-    '''
-    '''

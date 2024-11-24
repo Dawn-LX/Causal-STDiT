@@ -13,8 +13,9 @@ else
 
     export ROOT_CKPT_DIR="/data9T/gaokaifeng/LargeModelWeightsFromHuggingFace"
     export ROOT_DATA_DIR="/data9T/gaokaifeng/datasets"
-    export ROOT_OUTPUT_DIR="{$CODE_ROOT}/working_dir"
+    export ROOT_OUTPUT_DIR="${CODE_ROOT}/working_dir"
     echo "on server A6000"
+    echo $ROOT_OUTPUT_DIR
 fi
 
 export PYTHONPATH=$PYTHONPATH:$CODE_ROOT
@@ -48,13 +49,14 @@ torchrun \
 
     bash scripts/train.sh \
     configs/causal_stdit/train_overfit_beach_demo.py \
-    debug_overfit \
+    overfit_demo \
     9686 0
 
 # train skytimelapse
 
     bash scripts/train.sh \
-    configs/causal_stdit/train_SkyTimelapse_33x256x256_TPE33.py \
+    configs/causal_stdit/train_SkyTimelapse_demo.py \
+    skytimelapse_demo \
     9686 0
 
 comment

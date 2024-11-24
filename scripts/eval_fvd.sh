@@ -1,5 +1,5 @@
 if test -d "/data"; then
-    # for server 10.130.129.11
+    # for server A100
     export CODE_ROOT="/home/gkf/project/CausalSTDiT"
     
     export ROOT_CKPT_DIR="/home/gkf/LargeModelWeightsFromHuggingFace"
@@ -7,7 +7,7 @@ if test -d "/data"; then
     export SAMPLE_SAVE_DIR="/data/sample_outputs"
     echo "on server A100"
 else
-    # for server 10.130.129.34
+    # for server A6000
     export CODE_ROOT="/data9T/gaokaifeng/project/CausalSTDiT"
 
     export ROOT_CKPT_DIR="/data9T/gaokaifeng/LargeModelWeightsFromHuggingFace"
@@ -40,24 +40,10 @@ python scripts/eval_fvd.py \
 
 <<comment
 
-
-bash scripts/eval_fvd.sh \
-/data/CausalSTDiT_working_dir/debug_inference/sampling_cfg_14831e3e05cfd0b1d0a97c2ff2a6b3f5_debug_inference.json \
-working_dirSampleOutput/eval_fvd 3
-
-## exp6 pure causal cyclic tpe 33
+## example
 
     bash scripts/eval_fvd.sh \
-    /data9T/gaokaifeng/CausalSTDiT_working_dir/exp6_ddp_sample_17x256x256/sampling_cfg_8ee3f15f3b85f99b68acf4ae2a179419_exp6_ddp_sample_17x256x256.json \
-    working_dirSampleOutput/eval_fvd 2
-    # fvd 16x256x256
-        fvd=218.81257450842054
-
-## exp7 full attn fixed tpe 33
-    bash scripts/eval_fvd.sh \
-    /data/CausalSTDiT_working_dir/exp7_ddp_sample_17x256x256/sampling_cfg_ded69aae5152710cd223755884b615fc_exp7_ddp_sample_17x256x256.json \
+    /path/to/sampling_cfg_backup.json \
     working_dirSampleOutput/eval_fvd 0
-
-    fvd=80.40532316319612
 
 comment

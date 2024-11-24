@@ -1,5 +1,5 @@
 if test -d "/data"; then
-    # for server 10.130.129.11
+    # for server A100
     export CODE_ROOT="/home/gkf/project/CausalSTDiT"
     
     export ROOT_CKPT_DIR="/home/gkf/LargeModelWeightsFromHuggingFace"
@@ -7,7 +7,7 @@ if test -d "/data"; then
     export SAMPLE_SAVE_DIR="/data/sample_outputs"
     echo "on server A100"
 else
-    # for server 10.130.129.34
+    # for server A6000
     export CODE_ROOT="/data9T/gaokaifeng/project/CausalSTDiT"
 
     export ROOT_CKPT_DIR="/data9T/gaokaifeng/LargeModelWeightsFromHuggingFace"
@@ -48,11 +48,11 @@ torchrun \
 
 
     bash scripts/inference_dataset_ddp.sh \
-    configs/ddp_sample_skytimelapse/chunk8_MaxCond41_ArSteps6_withKVcache.py \
-    /data9T/gaokaifeng/CausalSTDiT_working_dir/exp6.4_pure_causal_NoCfattn_tpe49/training_config_backup.json \
-    /data9T/gaokaifeng/CausalSTDiT_working_dir/exp6.4_pure_causal_NoCfattn_tpe49/epoch3-global_step11000 \
-    /data9T/gaokaifeng/CausalSTDiT_working_dir/exp6.4ckpt11k_ddpsample_49x256x256 \
-    9977 2
+    configs/causal_stdit/ddp_sample_skytimelapse_withKVcache.py \
+    working_dir/skytimelapse_demo/training_config_backup.json \
+    /path/to/checkpoint/ \
+    /path/to/sample/output/dir \
+    9977 0
 
     
 comment
