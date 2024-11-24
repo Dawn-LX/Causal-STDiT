@@ -546,8 +546,3 @@ if __name__ == "__main__":
 
     main(configs)
 
-    '''
-    bash /home/gkf/project/CausalSTDiT/scripts/train.sh \
-        configs/baselines/exp4_partialcausal_attn_cyclic_tpe33.py \
-        9686 0
-    '''
