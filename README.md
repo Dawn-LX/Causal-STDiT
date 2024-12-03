@@ -10,4 +10,22 @@ previous clip
     - our kv-cache is shared across all the denoising steps. They store the kv-cache for all the denoising steps
     - we use a cache queue structure to support the autoregressive generation, facilitated by the cyclic-TPEs
 
+## training script 
+an overfiting demo
+```
+bash scripts/train.sh \
+    configs/causal_stdit/train_overfit_beach_demo.py \
+    overfit_demo \
+    9686 0
+```
+
+SkyTimelapse demo
+```
+bash scripts/train.sh \
+    configs/causal_stdit/train_SkyTimelapse_demo.py \
+    skytimelapse_demo \
+    9686 0
+```
+refer to `scripts/train.sh` to config the `ROOT_DATA_DIR`
+
 The code is preparing
